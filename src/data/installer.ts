@@ -20,7 +20,6 @@ interface Manifest {
 }
 
 const PROFILE_INCLUDES: Record<string, Array<"small" | "medium" | "full">> = {
-  online: [],
   small: ["small"],
   medium: ["small", "medium"],
   full: ["small", "medium", "full"],

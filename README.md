@@ -1,30 +1,37 @@
 # Multilingual Dictionary MCP
 
-An MCP server for **multilingual dictionary lookups with word relations** — synonyms, antonyms, hypernyms, hyponyms, meronyms, translations, etymology, definitions, rhymes, and more — covering **all languages** by stitching together three free public APIs:
+An **offline-first** MCP server for multilingual dictionary lookups — definitions, synonyms, antonyms, hypernyms, hyponyms, meronyms, translations, etymology, pronunciation, semantic neighbors, rhymes, and more — across **4,755 languages**.
 
-- **[ConceptNet](https://conceptnet.io/)** — multilingual semantic network (80+ languages, word relations: Synonym, Antonym, IsA, PartOf, RelatedTo, DerivedFrom, etc.)
-- **[Wiktionary](https://en.wiktionary.org/)** — definitions, etymology, and pronunciation in 4000+ languages
-- **[Datamuse](https://www.datamuse.com/api/)** — English-only utilities (rhymes, sound-alikes, "means like", spelling patterns, contextual triggers)
+No third-party APIs. No rate limits. No outages. The server downloads its data from a CDN once on first run and never goes online again.
 
-No API keys. No bundled data. Just plug it into Claude (or any MCP client) and ask it about words in any language.
+## What's bundled
 
----
+| Source | Size | What it covers |
+| --- | --- | --- |
+| **Wiktextract** (Kaikki.org) | 6.6 GB | 10.5M dictionary entries across 4,755 languages — definitions, etymology, IPA, translations |
+| **ConceptNet 5.7** | 5.6 GB | 24.3M semantic edges across 80+ languages — Synonym, Antonym, IsA, PartOf, RelatedTo, UsedFor, CapableOf, AtLocation, DerivedFrom, EtymologicallyRelatedTo |
+| **Numberbatch embeddings** | 3 GB | 9.16M concepts × 300d multilingual embeddings — semantic neighbors via cosine similarity |
+| **CMU Pronouncing Dictionary** | 19 MB | English rhymes, soundalikes, autocomplete, spell patterns |
+
+Total bundle: **~21 GB** (medium profile, default).
+
+## Install profiles
+
+| Profile | Size | What it covers |
+| --- | --- | --- |
+| `small` | ~5 MB | English rhymes/soundalikes only (CMU dict) |
+| `medium` (default) | ~16 GB | Everything except per-language Wiktextract (uses the comprehensive 4,755-language SQLite) |
+| `full` | ~21 GB | Adds per-language Wiktextract SQLites for fast targeted queries |
+
+Set with `MDM_PROFILE=small|medium|full` (default `medium`).
 
 ## Installation
-
-### From npm
 
 ```bash
 npm install -g multilingual-dictionary-mcp
 ```
 
-### From GitHub Packages
-
-```bash
-npm install -g @eyalm321/multilingual-dictionary-mcp --registry=https://npm.pkg.github.com
-```
-
-### Claude Desktop / Claude Code config
+### Claude Desktop / Claude Code
 
 ```json
 {
@@ -37,105 +44,41 @@ npm install -g @eyalm321/multilingual-dictionary-mcp --registry=https://npm.pkg.
 }
 ```
 
----
+On first run, the server downloads its data bundle from `multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com` into `~/.cache/multilingual-dictionary-mcp/` (overridable via `MDM_DATA_DIR`). SHA-256 verified per artifact. **Expect a one-time ~16 GB download — go make coffee.** Subsequent runs are instant.
 
 ## Tools
 
-### Multilingual word relations (ConceptNet)
+### Multilingual word relations (ConceptNet — 80+ languages)
 
-All of these accept a `word`, an ISO 639-1 `language` code (defaults to `en`), and a `limit`. Works for English, Spanish, French, German, Italian, Russian, Hebrew, Arabic, Latin, Chinese, Japanese, and 70+ more.
+`dictionary_synonyms`, `dictionary_antonyms`, `dictionary_hypernyms`, `dictionary_hyponyms`, `dictionary_meronyms`, `dictionary_holonyms`, `dictionary_derived_from`, `dictionary_etymologically_related`, `dictionary_used_for`, `dictionary_capable_of`, `dictionary_at_location`, `dictionary_translate`, `dictionary_all_relations`
 
-| Tool | Description |
+### Embedding-based semantic search (Numberbatch — 78 languages)
+
+| Tool | What it does |
 | --- | --- |
-| `dictionary_synonyms` | Words with similar meaning |
-| `dictionary_antonyms` | Opposites |
-| `dictionary_related` | Loosely associated terms (RelatedTo edges) |
-| `dictionary_hypernyms` | Broader/parent concepts (dog → mammal) |
-| `dictionary_hyponyms` | Narrower/child concepts (dog → poodle) |
-| `dictionary_meronyms` | Parts/components (car → wheel) |
-| `dictionary_holonyms` | Wholes that contain this (wheel → car) |
-| `dictionary_derived_from` | Etymological roots |
-| `dictionary_etymologically_related` | Cognates and shared roots across languages |
-| `dictionary_used_for` | Typical purposes (knife → cutting) |
-| `dictionary_capable_of` | Typical actions (dog → bark) |
-| `dictionary_at_location` | Typical locations (book → library) |
-| `dictionary_translate` | Cross-lingual synonyms — translates a word |
-| `dictionary_all_relations` | All relations for a word in one call |
+| `dictionary_related` | Semantic neighbors via cosine similarity — much denser than ConceptNet RelatedTo |
+| `dictionary_semantic_neighbors` | Explicit embedding lookup with optional cross-lingual filter |
+| `dictionary_means_like` | Multilingual "means approximately" via Numberbatch (works in any of the 78 covered languages) |
 
-### Definitions & etymology (Wiktionary)
+### Definitions & etymology (Wiktextract — 4,755 languages)
 
-| Tool | Description |
+| Tool | What it does |
 | --- | --- |
-| `dictionary_lookup` | Definitions grouped by language (4000+ languages via en.wiktionary) |
-| `dictionary_summary` | Brief plain-text summary from any Wiktionary edition |
-| `dictionary_etymology` | Etymology section, plain text |
-| `dictionary_pronunciation` | Pronunciation section (typically IPA) |
-| `dictionary_search` | Search a Wiktionary edition for matching pages |
-| `dictionary_random` | Random word from any Wiktionary edition |
+| `dictionary_lookup` | Definitions + IPA + etymology grouped by language |
+| `dictionary_summary` | Concatenated short definition |
+| `dictionary_etymology` | Etymology text |
+| `dictionary_pronunciation` | IPA pronunciations |
+| `dictionary_search` | Prefix-search the corpus |
+| `dictionary_random` | Random word entry |
 
-### English-specific utilities (Datamuse)
+### English-specific (CMU Pronouncing Dictionary)
 
-| Tool | Description |
+| Tool | What it does |
 | --- | --- |
 | `dictionary_rhymes` | Perfect or near rhymes |
 | `dictionary_sounds_like` | Homophones / soundalikes |
-| `dictionary_means_like` | ML-based "means approximately" — broader than synonyms |
-| `dictionary_spelled_like` | Spelling pattern with `?` and `*` wildcards |
-| `dictionary_suggest` | Autocomplete |
-| `dictionary_triggers` | Statistically associated terms (cow → milk, farm) |
-| `dictionary_follows` | Words that commonly follow (drink → coffee) |
-| `dictionary_precedes` | Words that commonly precede (audience → captive) |
-
-### Cache management
-
-| Tool | Description |
-| --- | --- |
-| `dictionary_cache_stats` | Inspect hits/misses/size of the in-memory response cache |
-| `dictionary_cache_clear` | Force fresh upstream lookups by clearing the cache |
-
----
-
-## Offline mode (v0.3+)
-
-Set `MDM_PROFILE` to bundle local data and stop depending on upstream APIs:
-
-| Profile | Size | Coverage |
-| --- | --- | --- |
-| `online` (default) | 0 | network-only, hits ConceptNet/Wiktionary/Datamuse live |
-| `small` | ~5 MB | CMU dict only — local rhymes/sounds-like, everything else still online |
-| `medium` | ~3 GB | + ConceptNet 5.7 SQLite + Numberbatch embeddings + 5 Wiktextract languages |
-| `full` | ~20 GB | + all Wiktextract languages + n-gram corpus for triggers/follows/precedes |
-
-```bash
-MDM_PROFILE=medium npx multilingual-dictionary-mcp
-```
-
-On first run, the server downloads the configured profile's artifacts from the public CDN at `https://multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com` into `~/.cache/multilingual-dictionary-mcp/` (overridable via `MDM_DATA_DIR`). Subsequent runs use cached files. SHA-256 verification on every artifact.
-
-When local data is present, tools query SQLite/binary matrices directly. When it isn't (or the profile is `online`), they fall back to the live APIs. So a partial install just means partial offline coverage — nothing breaks.
-
-The `better-sqlite3` package is an `optionalDependencies` — if it fails to compile during `npm install`, the package still installs but offline mode silently falls back to online.
-
-### Building the data bundle yourself
-
-The CDN ships official builds, but the entire pipeline is in [`data-pipeline/`](data-pipeline/) so you can rebuild from upstream sources or ship your own bucket. See [`data-pipeline/README.md`](data-pipeline/README.md).
-
-## Caching
-
-Every successful upstream response is cached **in memory** for the lifetime of the server process, keyed by the full request URL. Identical follow-up calls within the same session return instantly without hitting ConceptNet/Wiktionary/Datamuse again.
-
-- Default TTL: **24 hours**
-- Default max entries: **5000** (LRU eviction)
-- Disabled for `dictionary_random` (which is supposed to vary)
-- No disk persistence — cache is rebuilt on each server start
-
-Tune via env vars:
-
-```bash
-MDM_DISABLE_CACHE=true        # turn caching off
-MDM_CACHE_TTL_MS=3600000      # 1 hour TTL
-MDM_CACHE_MAX_ENTRIES=10000   # bigger cache
-```
+| `dictionary_spelled_like` | Spelling pattern (`?` and `*` wildcards) |
+| `dictionary_suggest` | Autocomplete prefix |
 
 ---
 
@@ -148,14 +91,14 @@ MDM_CACHE_MAX_ENTRIES=10000   # bigger cache
 > Translate "happiness" into Hebrew
 [uses dictionary_translate with language: "en", targetLanguage: "he"]
 
-> What's the etymology of the word "serendipity"?
+> What's the etymology of "serendipity"?
 [uses dictionary_etymology]
 
-> Find me words that rhyme with "orange"
-[uses dictionary_rhymes]
+> Find words semantically similar to "café" across languages
+[uses dictionary_semantic_neighbors]
 
-> What are the parts of a bicycle?
-[uses dictionary_meronyms with word: "bicycle"]
+> What rhymes with "orange"?
+[uses dictionary_rhymes with perfect: false]
 ```
 
 ---
@@ -164,39 +107,39 @@ MDM_CACHE_MAX_ENTRIES=10000   # bigger cache
 
 ```bash
 npm install
-npm run build      # TypeScript compile
-npm test           # vitest run
-npm run test:watch # vitest watch
-npm run dev        # ts-node entry point
+npm run build
+npm test           # 42 tests, all run without local data
 ```
 
-### Project layout
+Source layout:
 
 ```
 src/
-├── index.ts            # MCP server entry
-├── client.ts           # HTTP wrappers for ConceptNet / Wiktionary / Datamuse
-├── tools/
-│   ├── relations.ts    # ConceptNet-backed multilingual relation tools
-│   ├── definitions.ts  # Wiktionary-backed definition/etymology tools
-│   └── english.ts      # Datamuse-backed English utilities
-└── __tests__/          # vitest specs
+├── index.ts            # MCP server entry, blocks on first-run install
+├── data/
+│   ├── paths.ts        # CDN base, profile selection, data dir
+│   ├── installer.ts    # First-run downloader + SHA-256 verification
+│   └── local-store.ts  # SQLite + Numberbatch matrix wrappers
+└── tools/
+    ├── relations.ts    # 13 ConceptNet relation tools + 1 embedding tool
+    ├── definitions.ts  # 6 Wiktextract definition tools
+    └── english.ts      # 5 CMU dict + Numberbatch tools
 ```
+
+Total: **24 tools**.
+
+---
+
+## Building the data bundle yourself
+
+The CDN ships official builds, but the entire pipeline is in [`data-pipeline/`](data-pipeline/) — see its [README](data-pipeline/README.md). You can rebuild from upstream sources, ship to your own bucket, and override `MDM_CDN_BASE`.
 
 ---
 
 ## CI / Release
 
-- **CI** runs on every push and PR against `main`, on Node 20 and 22.
-- **Publish** runs when a GitHub Release is published — tests, builds, then publishes to **both** [npm](https://www.npmjs.com/) (as `multilingual-dictionary-mcp`) and [GitHub Packages](https://github.com/Eyalm321/multilingual-dictionary-mcp/packages) (as `@eyalm321/multilingual-dictionary-mcp`).
-
-To cut a release:
-
-1. Bump the `version` in `package.json` and commit.
-2. Tag and push (e.g. `git tag v0.1.1 && git push --tags`).
-3. Create a GitHub Release pointing at the tag — the publish workflow handles the rest.
-
-The publish workflow expects two repository secrets: `NPM_TOKEN` (npm automation token) and `GITHUB_TOKEN` (auto-provided by GitHub Actions).
+- **CI** runs build + tests on Node 20 & 22 for every push and PR.
+- **Publish** runs on GitHub Release publish, pushes to npm and GitHub Packages.
 
 ---
 

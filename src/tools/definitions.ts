@@ -1,270 +1,214 @@
 import { z } from "zod";
-import { httpGet, wiktionaryRequest } from "../client.js";
+import {
+  localWiktextractByWord,
+  localWiktextractSearch,
+  localWiktextractRandom,
+  WiktextractRow,
+} from "../data/local-store.js";
 
-interface WiktionaryDefinitionEntry {
-  partOfSpeech: string;
-  language: string;
-  definitions: Array<{
-    definition: string;
-    examples?: string[];
-    parsedExamples?: Array<{ example: string }>;
-  }>;
+interface SenseFromWiktextract {
+  glosses?: string[];
+  raw_glosses?: string[];
+  examples?: Array<{ text?: string; type?: string }>;
+  tags?: string[];
 }
 
-interface WiktionaryDefinitionResponse {
-  [languageCode: string]: WiktionaryDefinitionEntry[];
-}
-
-interface MediaWikiQueryResponse {
-  query?: {
-    pages?: Record<
-      string,
-      {
-        title?: string;
-        extract?: string;
-        revisions?: Array<{ slots?: { main?: { "*"?: string; content?: string } }; "*"?: string }>;
-      }
-    >;
+function shapeEntry(row: WiktextractRow) {
+  let senses: SenseFromWiktextract[] = [];
+  try {
+    senses = JSON.parse(row.senses_json);
+  } catch {
+    senses = [];
+  }
+  return {
+    word: row.word,
+    language: row.lang_code,
+    partOfSpeech: row.pos,
+    ipa: row.ipa,
+    etymology: row.etymology,
+    definitions: senses.map((s) => ({
+      definition: (s.glosses || s.raw_glosses || []).join("; "),
+      tags: s.tags ?? [],
+      examples: (s.examples || [])
+        .map((e) => e.text)
+        .filter((x): x is string => typeof x === "string"),
+    })),
   };
-  parse?: {
-    title?: string;
-    text?: { "*": string } | string;
-    wikitext?: { "*": string } | string;
-  };
 }
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function extractSection(wikitext: string, sectionName: string): string | undefined {
-  const re = new RegExp(`={2,}\\s*${sectionName}\\s*={2,}`, "i");
-  const match = re.exec(wikitext);
-  if (!match) return undefined;
-  const start = match.index + match[0].length;
-  const rest = wikitext.slice(start);
-  const nextSection = /={2,}\s*[^=]+\s*={2,}/.exec(rest);
-  return nextSection ? rest.slice(0, nextSection.index).trim() : rest.trim();
-}
-
-function cleanWikitext(wt: string): string {
-  return wt
-    .replace(/\{\{[^{}]*\}\}/g, "")
-    .replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, "$1")
-    .replace(/'''([^']+)'''/g, "$1")
-    .replace(/''([^']+)''/g, "$1")
-    .replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, "")
-    .replace(/<ref[^>]*\/>/gi, "")
-    .replace(/<[^>]+>/g, "")
-    .replace(/^\s*[*#:]+\s*/gm, "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .join("\n");
+function requireLocal<T>(value: T | undefined, what: string): T {
+  if (value === undefined) {
+    throw new Error(
+      `${what} requires the offline Wiktextract data. Run with MDM_PROFILE=medium or full so the dictionary downloads from the CDN on first start.`
+    );
+  }
+  return value;
 }
 
 export const definitionTools = [
   {
     name: "dictionary_lookup",
     description:
-      "Look up definitions for a word from Wiktionary. Uses the English Wiktionary REST API which includes entries for words in 4000+ languages. Returns part-of-speech, definitions grouped by language, and examples.",
+      "Look up definitions for a word from the offline Wiktextract corpus (4,755 languages, 10.5M entries). Returns part-of-speech, definitions per sense, IPA, etymology, and translations grouped by language.",
     inputSchema: z.object({
       word: z.string().describe("The word to look up"),
       language: z
         .string()
         .optional()
         .describe(
-          "Filter results to a specific language ISO 639-1 code (e.g. 'en', 'es', 'la'). Omit to return entries for all languages."
+          "Filter to a specific ISO 639-1 language code. Omit to return entries in all languages."
         ),
+      limit: z.number().int().min(1).max(500).default(100),
     }),
-    handler: async (args: { word: string; language?: string }) => {
-      const data = await wiktionaryRequest<WiktionaryDefinitionResponse>(
-        `/api/rest_v1/page/definition/${encodeURIComponent(args.word)}`
+    handler: async (args: {
+      word: string;
+      language?: string;
+      limit?: number;
+    }) => {
+      const rows = requireLocal(
+        localWiktextractByWord(args.word, args.language, args.limit ?? 100),
+        "dictionary_lookup"
       );
-
-      const cleaned: Record<string, unknown> = {};
-      for (const [langCode, entries] of Object.entries(data)) {
-        if (args.language && langCode !== args.language) continue;
-        cleaned[langCode] = entries.map((entry) => ({
-          partOfSpeech: entry.partOfSpeech,
-          language: entry.language,
-          definitions: entry.definitions.map((def) => ({
-            definition: stripHtml(def.definition),
-            examples: (def.parsedExamples ?? def.examples ?? []).map((ex) =>
-              typeof ex === "string" ? stripHtml(ex) : stripHtml(ex.example)
-            ),
-          })),
-        }));
+      const grouped: Record<string, ReturnType<typeof shapeEntry>[]> = {};
+      for (const row of rows) {
+        const lang = row.lang_code;
+        if (!grouped[lang]) grouped[lang] = [];
+        grouped[lang].push(shapeEntry(row));
       }
-
-      return cleaned;
+      return grouped;
     },
   },
   {
     name: "dictionary_summary",
     description:
-      "Get a brief summary/extract for a word from a specific language Wiktionary. Useful for getting a concise plain-text overview.",
+      "Get a brief plain-text summary of a word's senses from the offline Wiktextract data. Concatenates the first definition of each sense.",
     inputSchema: z.object({
       word: z.string().describe("The word to look up"),
-      wiktionaryLanguage: z
+      language: z
         .string()
         .default("en")
-        .describe(
-          "Which Wiktionary edition to query (e.g. 'en' for en.wiktionary.org, 'es' for es.wiktionary.org)"
-        ),
+        .describe("ISO 639-1 language code"),
     }),
-    handler: async (args: { word: string; wiktionaryLanguage?: string }) => {
-      const wikLang = args.wiktionaryLanguage ?? "en";
-      const url = `https://${wikLang}.wiktionary.org/api/rest_v1/page/summary/${encodeURIComponent(args.word)}`;
-      return httpGet<unknown>(url);
+    handler: async (args: { word: string; language?: string }) => {
+      const lang = args.language ?? "en";
+      const rows = requireLocal(
+        localWiktextractByWord(args.word, lang, 5),
+        "dictionary_summary"
+      );
+      if (!rows.length) return { word: args.word, language: lang, summary: null };
+      const definitions: string[] = [];
+      for (const row of rows) {
+        const entry = shapeEntry(row);
+        for (const def of entry.definitions) {
+          if (def.definition) definitions.push(def.definition);
+          if (definitions.length >= 5) break;
+        }
+        if (definitions.length >= 5) break;
+      }
+      return {
+        word: args.word,
+        language: lang,
+        summary: definitions.join(" • "),
+        partsOfSpeech: Array.from(new Set(rows.map((r) => r.pos).filter(Boolean))),
+      };
     },
   },
   {
     name: "dictionary_etymology",
     description:
-      "Extract the etymology section for a word from Wiktionary. Returns the plain-text etymology from the requested Wiktionary edition.",
+      "Return etymology text for a word from the offline Wiktextract corpus.",
     inputSchema: z.object({
       word: z.string().describe("The word to look up"),
-      wiktionaryLanguage: z
+      language: z
         .string()
         .default("en")
-        .describe("Which Wiktionary edition to query"),
+        .describe("ISO 639-1 language code"),
     }),
-    handler: async (args: { word: string; wiktionaryLanguage?: string }) => {
-      const wikLang = args.wiktionaryLanguage ?? "en";
-      const data = await httpGet<MediaWikiQueryResponse>(
-        `https://${wikLang}.wiktionary.org/w/api.php`,
-        {
-          action: "parse",
-          page: args.word,
-          prop: "wikitext",
-          format: "json",
-          formatversion: "2",
-        }
+    handler: async (args: { word: string; language?: string }) => {
+      const lang = args.language ?? "en";
+      const rows = requireLocal(
+        localWiktextractByWord(args.word, lang, 5),
+        "dictionary_etymology"
       );
-      const wikitext =
-        typeof data.parse?.wikitext === "string"
-          ? data.parse?.wikitext
-          : data.parse?.wikitext?.["*"];
-      if (!wikitext) {
-        return { word: args.word, etymology: null, note: "No wikitext returned" };
-      }
-      const section = extractSection(wikitext, "Etymology(?:\\s*\\d+)?");
+      const ety = rows.find((r) => r.etymology);
       return {
         word: args.word,
-        etymology: section ? cleanWikitext(section) : null,
+        language: lang,
+        etymology: ety?.etymology ?? null,
       };
     },
   },
   {
     name: "dictionary_pronunciation",
     description:
-      "Extract the Pronunciation section (typically containing IPA) for a word from Wiktionary.",
+      "Return IPA pronunciation(s) for a word from the offline Wiktextract corpus.",
     inputSchema: z.object({
       word: z.string().describe("The word to look up"),
-      wiktionaryLanguage: z
+      language: z
         .string()
         .default("en")
-        .describe("Which Wiktionary edition to query"),
+        .describe("ISO 639-1 language code"),
     }),
-    handler: async (args: { word: string; wiktionaryLanguage?: string }) => {
-      const wikLang = args.wiktionaryLanguage ?? "en";
-      const data = await httpGet<MediaWikiQueryResponse>(
-        `https://${wikLang}.wiktionary.org/w/api.php`,
-        {
-          action: "parse",
-          page: args.word,
-          prop: "wikitext",
-          format: "json",
-          formatversion: "2",
-        }
+    handler: async (args: { word: string; language?: string }) => {
+      const lang = args.language ?? "en";
+      const rows = requireLocal(
+        localWiktextractByWord(args.word, lang, 10),
+        "dictionary_pronunciation"
       );
-      const wikitext =
-        typeof data.parse?.wikitext === "string"
-          ? data.parse?.wikitext
-          : data.parse?.wikitext?.["*"];
-      if (!wikitext) {
-        return { word: args.word, pronunciation: null };
-      }
-      const section = extractSection(wikitext, "Pronunciation");
+      const ipa = Array.from(
+        new Set(
+          rows
+            .map((r) => r.ipa)
+            .filter((x): x is string => typeof x === "string" && x.length > 0)
+            .flatMap((s) => s.split(" | "))
+        )
+      );
       return {
         word: args.word,
-        pronunciation: section ? cleanWikitext(section) : null,
+        language: lang,
+        pronunciation: ipa,
       };
     },
   },
   {
     name: "dictionary_search",
     description:
-      "Search a Wiktionary edition for pages matching a query. Useful when you don't know the exact spelling or want suggestions.",
+      "Prefix-search the offline Wiktextract corpus for words matching a query. Useful when you don't know the exact spelling.",
     inputSchema: z.object({
-      query: z.string().describe("Search query"),
-      wiktionaryLanguage: z
+      query: z.string().describe("Prefix to search for"),
+      language: z
         .string()
-        .default("en")
-        .describe("Which Wiktionary edition to search"),
-      limit: z.number().int().min(1).max(50).default(10),
+        .optional()
+        .describe("Filter to a specific ISO 639-1 language code"),
+      limit: z.number().int().min(1).max(100).default(20),
     }),
     handler: async (args: {
       query: string;
-      wiktionaryLanguage?: string;
+      language?: string;
       limit?: number;
     }) => {
-      const wikLang = args.wiktionaryLanguage ?? "en";
-      const data = await httpGet<[string, string[], string[], string[]]>(
-        `https://${wikLang}.wiktionary.org/w/api.php`,
-        {
-          action: "opensearch",
-          search: args.query,
-          limit: args.limit ?? 10,
-          format: "json",
-          formatversion: "2",
-        }
+      return requireLocal(
+        localWiktextractSearch(args.query, args.language, args.limit ?? 20),
+        "dictionary_search"
       );
-      const [, titles, descriptions, urls] = data;
-      return titles.map((title, i) => ({
-        title,
-        description: descriptions[i] ?? "",
-        url: urls[i] ?? "",
-      }));
     },
   },
   {
     name: "dictionary_random",
     description:
-      "Get a random word entry from a specific Wiktionary edition. Useful for vocabulary discovery in any language.",
+      "Return a random word entry from the offline Wiktextract corpus, optionally filtered to a language.",
     inputSchema: z.object({
-      wiktionaryLanguage: z
+      language: z
         .string()
-        .default("en")
-        .describe("Which Wiktionary edition to query"),
+        .optional()
+        .describe("Filter to a specific ISO 639-1 language code"),
     }),
-    handler: async (args: { wiktionaryLanguage?: string }) => {
-      const wikLang = args.wiktionaryLanguage ?? "en";
-      const data = await httpGet<{
-        query?: { random?: Array<{ id: number; title: string }> };
-      }>(
-        `https://${wikLang}.wiktionary.org/w/api.php`,
-        {
-          action: "query",
-          list: "random",
-          rnnamespace: "0",
-          rnlimit: "1",
-          format: "json",
-          formatversion: "2",
-        },
-        { bypassCache: true }
+    handler: async (args: { language?: string }) => {
+      const row = requireLocal(
+        localWiktextractRandom(args.language),
+        "dictionary_random"
       );
-      return data.query?.random ?? [];
+      return row ? shapeEntry(row) : null;
     },
   },
 ];

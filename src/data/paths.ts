@@ -10,11 +10,10 @@ export const CDN_BASE =
   "https://multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com";
 
 export const PROFILE = (process.env.MDM_PROFILE as
-  | "online"
   | "small"
   | "medium"
   | "full"
-  | undefined) ?? "online";
+  | undefined) ?? "medium";
 
 export function manifestUrl(): string {
   return `${CDN_BASE}/manifest.json`;

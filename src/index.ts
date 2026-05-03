@@ -4,7 +4,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { relationTools } from "./tools/relations.js";
 import { definitionTools } from "./tools/definitions.js";
 import { englishTools } from "./tools/english.js";
-import { adminTools } from "./tools/admin.js";
 import { ensureDataInstalled } from "./data/installer.js";
 
 const server = new McpServer({
@@ -12,12 +11,7 @@ const server = new McpServer({
   version: "0.3.0",
 });
 
-const allTools = [
-  ...relationTools,
-  ...definitionTools,
-  ...englishTools,
-  ...adminTools,
-];
+const allTools = [...relationTools, ...definitionTools, ...englishTools];
 
 for (const tool of allTools) {
   server.tool(
@@ -44,12 +38,10 @@ for (const tool of allTools) {
 }
 
 async function main() {
-  // If MDM_PROFILE is set to anything other than "online", kick off the
-  // first-run install in the background. The first lookup may go online while
-  // data is still downloading; subsequent ones use local data.
-  ensureDataInstalled().catch((err) => {
-    console.error("[mdm-data] install failed (continuing online):", err);
-  });
+  // Block on first-run install. The package is offline-first — every tool
+  // requires the local data. If install fails, surface it loudly rather than
+  // silently degrading.
+  await ensureDataInstalled();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

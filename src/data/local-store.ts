@@ -49,6 +49,13 @@ function cmuDb(): SqliteDb | null {
   return cachedCmu;
 }
 
+let cachedWiktextract: SqliteDb | null = null;
+function wiktextractDb(): SqliteDb | null {
+  if (cachedWiktextract) return cachedWiktextract;
+  cachedWiktextract = openReadonly(localPath("wiktextract-all.sqlite"));
+  return cachedWiktextract;
+}
+
 function normalizeWord(word: string): string {
   return word.trim().toLowerCase().replace(/\s+/g, "_");
 }
@@ -159,6 +166,40 @@ export function localRhymes(
   return rows;
 }
 
+export interface CmuRow {
+  word: string;
+  numSyllables: number;
+  phones: string;
+}
+
+export function localSpelledLike(
+  pattern: string,
+  limit: number
+): CmuRow[] | undefined {
+  const db = cmuDb();
+  if (!db) return undefined;
+  // CMU "?" -> SQL "_", "*" -> "%"
+  const sqlPattern = pattern.toLowerCase().replace(/\?/g, "_").replace(/\*/g, "%");
+  return db
+    .prepare(
+      "SELECT word, num_syllables AS numSyllables, phones FROM pron WHERE word LIKE ? LIMIT ?"
+    )
+    .all(sqlPattern, limit) as CmuRow[];
+}
+
+export function localSuggest(
+  prefix: string,
+  limit: number
+): CmuRow[] | undefined {
+  const db = cmuDb();
+  if (!db) return undefined;
+  return db
+    .prepare(
+      "SELECT word, num_syllables AS numSyllables, phones FROM pron WHERE word LIKE ? ORDER BY length(word) ASC LIMIT ?"
+    )
+    .all(prefix.toLowerCase() + "%", limit) as CmuRow[];
+}
+
 export function localSoundsLike(
   word: string,
   limit: number
@@ -176,6 +217,90 @@ export function localSoundsLike(
        FROM pron WHERE sound_key = ? AND word != ? LIMIT ?`
     )
     .all(seedRows[0].sound_key, lower, limit) as RhymeEntry[];
+}
+
+/** Wiktextract row shape from the all-languages SQLite. */
+export interface WiktextractRow {
+  word: string;
+  lang_code: string;
+  pos: string | null;
+  senses_json: string;
+  etymology: string | null;
+  ipa: string | null;
+  translations_json: string;
+}
+
+export function localWiktextractByWord(
+  word: string,
+  language?: string,
+  limit: number = 100
+): WiktextractRow[] | undefined {
+  const db = wiktextractDb();
+  if (!db) return undefined;
+  const lower = word.toLowerCase();
+  if (language) {
+    return db
+      .prepare(
+        "SELECT word, lang_code, pos, senses_json, etymology, ipa, translations_json FROM entries WHERE word = ? AND lang_code = ? LIMIT ?"
+      )
+      .all(lower, language, limit) as WiktextractRow[];
+  }
+  return db
+    .prepare(
+      "SELECT word, lang_code, pos, senses_json, etymology, ipa, translations_json FROM entries WHERE word = ? LIMIT ?"
+    )
+    .all(lower, limit) as WiktextractRow[];
+}
+
+export function localWiktextractSearch(
+  query: string,
+  language?: string,
+  limit: number = 10
+): Array<{ word: string; lang_code: string; pos: string | null }> | undefined {
+  const db = wiktextractDb();
+  if (!db) return undefined;
+  const sqlPattern = query.toLowerCase() + "%";
+  if (language) {
+    return db
+      .prepare(
+        "SELECT DISTINCT word, lang_code, pos FROM entries WHERE word LIKE ? AND lang_code = ? ORDER BY length(word) ASC LIMIT ?"
+      )
+      .all(sqlPattern, language, limit) as Array<{
+      word: string;
+      lang_code: string;
+      pos: string | null;
+    }>;
+  }
+  return db
+    .prepare(
+      "SELECT DISTINCT word, lang_code, pos FROM entries WHERE word LIKE ? ORDER BY length(word) ASC LIMIT ?"
+    )
+    .all(sqlPattern, limit) as Array<{
+    word: string;
+    lang_code: string;
+    pos: string | null;
+  }>;
+}
+
+export function localWiktextractRandom(
+  language?: string
+): WiktextractRow | undefined | null {
+  const db = wiktextractDb();
+  if (!db) return undefined;
+  if (language) {
+    const rows = db
+      .prepare(
+        "SELECT word, lang_code, pos, senses_json, etymology, ipa, translations_json FROM entries WHERE lang_code = ? ORDER BY RANDOM() LIMIT 1"
+      )
+      .all(language) as WiktextractRow[];
+    return rows[0] ?? null;
+  }
+  const rows = db
+    .prepare(
+      "SELECT word, lang_code, pos, senses_json, etymology, ipa, translations_json FROM entries ORDER BY RANDOM() LIMIT 1"
+    )
+    .all() as WiktextractRow[];
+  return rows[0] ?? null;
 }
 
 interface NumberbatchIndex {
