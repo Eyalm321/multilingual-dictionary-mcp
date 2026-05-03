@@ -1,0 +1,58 @@
+{
+  "name": "@eyalm321/multilingual-dictionary-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for multilingual dictionary lookups with word relations (synonyms, antonyms, hypernyms, translations, etc.) covering all languages via ConceptNet, Wiktionary, and Datamuse",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "main": "dist/index.js",
+  "bin": {
+    "multilingual-dictionary-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "dictionary",
+    "multilingual",
+    "wordnet",
+    "conceptnet",
+    "wiktionary",
+    "datamuse",
+    "synonyms",
+    "antonyms",
+    "translations",
+    "claude",
+    "model-context-protocol"
+  ],
+  "author": "Eyalm321",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Eyalm321/multilingual-dictionary-mcp.git"
+  },
+  "homepage": "https://github.com/Eyalm321/multilingual-dictionary-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Eyalm321/multilingual-dictionary-mcp/issues"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
