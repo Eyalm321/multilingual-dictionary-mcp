@@ -15,7 +15,7 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
 import Database from "better-sqlite3";
-import { BUILD_DIR, DOWNLOAD_DIR, download } from "./common.js";
+import { BUILD_DIR, DOWNLOAD_DIR, download } from "./common";
 
 const URL =
   "https://raw.githubusercontent.com/cmusphinx/cmudict/master/cmudict.dict";

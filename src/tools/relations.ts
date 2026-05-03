@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { conceptnetRequest, conceptnetUri } from "../client.js";
-import { localConceptNetEdges, LocalEdge } from "../data/local-store.js";
+import {
+  localConceptNetEdges,
+  LocalEdge,
+  localNumberbatchNeighbors,
+} from "../data/local-store.js";
 
 interface ConceptNetEdge {
   "@id": string;
@@ -151,19 +155,67 @@ export const relationTools = [
   {
     name: "dictionary_related",
     description:
-      "Get semantically related words for a word in any language using ConceptNet's RelatedTo edges. Useful for finding loosely associated terms (e.g. coffee -> espresso, cafe, brew).",
+      "Get semantically related words for a word in any language. With offline embeddings (Numberbatch) installed, returns embedding-based nearest neighbors via cosine similarity over a 9.16M concept matrix — much denser than ConceptNet's RelatedTo edges. Falls back to ConceptNet RelatedTo when embeddings aren't available.",
     inputSchema: z.object({
       word: z.string().describe("The word to look up"),
       language: z.string().default("en").describe("ISO 639-1 language code"),
       limit: z.number().int().min(1).max(1000).default(50),
     }),
     handler: async (args: { word: string; language?: string; limit?: number }) => {
-      return fetchEdges(
-        args.word,
-        args.language ?? "en",
-        "RelatedTo",
-        args.limit ?? 50
-      );
+      const lang = args.language ?? "en";
+      const limit = args.limit ?? 50;
+      const neighbors = localNumberbatchNeighbors(args.word, lang, limit);
+      if (neighbors !== undefined && neighbors.length > 0) {
+        return neighbors.map((n) => ({
+          word: args.word,
+          language: lang,
+          relation: "EmbeddingNeighbor",
+          weight: n.similarity,
+          source: args.word,
+          target: n.concept.split("/").pop()?.replace(/_/g, " ") ?? n.concept,
+          targetLanguage: n.concept.split("/")[2] ?? "",
+        }));
+      }
+      return fetchEdges(args.word, lang, "RelatedTo", limit);
+    },
+  },
+  {
+    name: "dictionary_semantic_neighbors",
+    description:
+      "Embedding-based nearest neighbors using ConceptNet Numberbatch (9.16M concepts × 300d). Returns words from the same OR a different language sorted by cosine similarity. Requires the offline embeddings to be installed (MDM_PROFILE=medium or full); errors otherwise.",
+    inputSchema: z.object({
+      word: z.string().describe("The word to look up"),
+      language: z.string().default("en").describe("Source language ISO 639-1 code"),
+      targetLanguage: z
+        .string()
+        .optional()
+        .describe(
+          "If set, only return neighbors in this language (cross-lingual semantic search). Omit for same-language."
+        ),
+      limit: z.number().int().min(1).max(1000).default(20),
+    }),
+    handler: async (args: {
+      word: string;
+      language?: string;
+      targetLanguage?: string;
+      limit?: number;
+    }) => {
+      const lang = args.language ?? "en";
+      const limit = args.limit ?? 20;
+      const neighbors = localNumberbatchNeighbors(args.word, lang, limit, {
+        targetLanguage: args.targetLanguage,
+      });
+      if (neighbors === undefined) {
+        throw new Error(
+          "Numberbatch embeddings are not installed. Set MDM_PROFILE=medium or full and restart the server."
+        );
+      }
+      return neighbors.map((n) => ({
+        concept: n.concept,
+        word: n.concept.split("/").pop()?.replace(/_/g, " ") ?? n.concept,
+        language: n.concept.split("/")[2] ?? "",
+        similarity: n.similarity,
+      }));
     },
   },
   {

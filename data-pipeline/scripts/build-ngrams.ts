@@ -21,7 +21,7 @@ import { createReadStream, readdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { BUILD_DIR } from "./common.js";
+import { BUILD_DIR } from "./common";
 
 const WIKI_TEXT_DIR = process.env.WIKI_TEXT_DIR;
 const DB_PATH = resolve(BUILD_DIR, "ngrams.sqlite");

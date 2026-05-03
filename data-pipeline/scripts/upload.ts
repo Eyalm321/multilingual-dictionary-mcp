@@ -9,7 +9,7 @@ import { readdirSync, statSync, createReadStream } from "node:fs";
 import { resolve } from "node:path";
 import { S3Client } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
-import { BUILD_DIR } from "./common.js";
+import { BUILD_DIR } from "./common";
 
 const KEY = process.env.DO_SPACES_KEY;
 const SECRET = process.env.DO_SPACES_SECRET;

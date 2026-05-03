@@ -11,8 +11,8 @@
  */
 import { readdirSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { BUILD_DIR } from "./common.js";
-import { sha256OfFile } from "./common.js";
+import { BUILD_DIR } from "./common";
+import { sha256OfFile } from "./common";
 
 const MANIFEST_VERSION = 1;
 const CDN_BASE =

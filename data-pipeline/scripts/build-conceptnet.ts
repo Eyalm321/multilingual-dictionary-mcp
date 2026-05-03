@@ -16,7 +16,7 @@ import { createGunzip } from "node:zlib";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
 import Database from "better-sqlite3";
-import { BUILD_DIR, DOWNLOAD_DIR, download, ensureDir } from "./common.js";
+import { BUILD_DIR, DOWNLOAD_DIR, download, ensureDir } from "./common";
 
 const CONCEPTNET_URL =
   "https://s3.amazonaws.com/conceptnet/downloads/2019/edges/conceptnet-assertions-5.7.0.csv.gz";

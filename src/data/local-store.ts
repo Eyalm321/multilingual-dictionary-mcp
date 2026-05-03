@@ -181,28 +181,42 @@ export function localSoundsLike(
 interface NumberbatchIndex {
   dim: number;
   rows: number;
-  conceptToRow: Record<string, number>;
+  conceptToRow: Map<string, number>;
 }
 let nbIndex: NumberbatchIndex | null | undefined;
 let nbMatrixFd: number | null = null;
-let nbMatrixSize: number = 0;
 
 function loadNumberbatch():
   | { index: NumberbatchIndex; fd: number }
   | undefined {
   if (nbIndex === null) return undefined;
   if (!nbIndex) {
-    const idxPath = localPath("numberbatch.idx.json");
+    const idxPath = localPath("numberbatch.idx.tsv");
+    const metaPath = localPath("numberbatch.meta.json");
     const matPath = localPath("numberbatch.bin");
-    if (!existsSync(idxPath) || !existsSync(matPath)) {
+    if (!existsSync(idxPath) || !existsSync(metaPath) || !existsSync(matPath)) {
       nbIndex = null;
       return undefined;
     }
     try {
-      const json = require("node:fs").readFileSync(idxPath, "utf8");
-      nbIndex = JSON.parse(json) as NumberbatchIndex;
+      const fs = require("node:fs");
+      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as {
+        dim: number;
+        rows: number;
+      };
+      const tsv = fs.readFileSync(idxPath, "utf8") as string;
+      const map = new Map<string, number>();
+      let i = 0;
+      while (i < tsv.length) {
+        const tab = tsv.indexOf("\t", i);
+        if (tab < 0) break;
+        const nl = tsv.indexOf("\n", tab + 1);
+        if (nl < 0) break;
+        map.set(tsv.slice(i, tab), Number(tsv.slice(tab + 1, nl)));
+        i = nl + 1;
+      }
+      nbIndex = { dim: meta.dim, rows: meta.rows, conceptToRow: map };
       nbMatrixFd = openSync(matPath, "r");
-      nbMatrixSize = statSync(matPath).size;
     } catch {
       nbIndex = null;
       return undefined;
@@ -244,13 +258,13 @@ export function localNumberbatchNeighbors(
   const nb = loadNumberbatch();
   if (!nb) return undefined;
   const concept = `/c/${language}/${normalizeWord(word)}`;
-  const seedRow = nb.index.conceptToRow[concept];
+  const seedRow = nb.index.conceptToRow.get(concept);
   if (seedRow === undefined) return [];
   const seed = readVector(nb.fd, nb.index.dim, seedRow);
   const langPrefix = opts.targetLanguage ? `/c/${opts.targetLanguage}/` : null;
   const heap: NumberbatchNeighbor[] = [];
   let heapMin = -Infinity;
-  for (const [c, row] of Object.entries(nb.index.conceptToRow)) {
+  for (const [c, row] of nb.index.conceptToRow) {
     if (c === concept) continue;
     if (langPrefix && !c.startsWith(langPrefix)) continue;
     const v = readVector(nb.fd, nb.index.dim, row);

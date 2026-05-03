@@ -19,13 +19,14 @@ import { createReadStream, createWriteStream, openSync, writeSync, closeSync } f
 import { createGunzip } from "node:zlib";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
-import { BUILD_DIR, DOWNLOAD_DIR, download } from "./common.js";
+import { BUILD_DIR, DOWNLOAD_DIR, download } from "./common";
 
 const NB_URL =
   "https://conceptnet.s3.amazonaws.com/downloads/2019/numberbatch/numberbatch-19.08.txt.gz";
 const SOURCE_PATH = resolve(DOWNLOAD_DIR, "numberbatch-19.08.txt.gz");
 const MATRIX_PATH = resolve(BUILD_DIR, "numberbatch.bin");
-const INDEX_PATH = resolve(BUILD_DIR, "numberbatch.idx.json");
+const INDEX_PATH = resolve(BUILD_DIR, "numberbatch.idx.tsv");
+const META_PATH = resolve(BUILD_DIR, "numberbatch.meta.json");
 
 const DIM = 300;
 
@@ -43,8 +44,10 @@ async function main() {
   });
 
   let header: { rows: number; dim: number } | null = null;
-  const conceptToRow: Record<string, number> = {};
   const matrixFd = openSync(MATRIX_PATH, "w");
+  // Stream the index as TSV ("concept\trow\n") so we never hold a 9M-entry
+  // object in memory. The runtime loader splits this lazily.
+  const indexStream = createWriteStream(INDEX_PATH);
   let row = 0;
   const start = Date.now();
 
@@ -70,7 +73,7 @@ async function main() {
       buf.writeInt8(quantize(v), i);
     }
     writeSync(matrixFd, buf);
-    conceptToRow[concept] = row;
+    indexStream.write(`${concept}\t${row}\n`);
     row += 1;
     if (row % 500_000 === 0) {
       const elapsed = (Date.now() - start) / 1000;
@@ -78,17 +81,22 @@ async function main() {
     }
   }
   closeSync(matrixFd);
-  console.log(`[numberbatch] wrote ${row.toLocaleString()} rows -> ${MATRIX_PATH}`);
-
-  const indexJson = JSON.stringify({ dim: DIM, rows: row, conceptToRow });
   await new Promise<void>((res, rej) => {
-    const out = createWriteStream(INDEX_PATH);
-    out.write(indexJson);
-    out.end();
-    out.on("close", () => res());
-    out.on("error", rej);
+    indexStream.end();
+    indexStream.on("close", () => res());
+    indexStream.on("error", rej);
   });
-  console.log(`[done] ${INDEX_PATH} (${(indexJson.length / 1_000_000).toFixed(1)} MB)`);
+  console.log(`[numberbatch] wrote ${row.toLocaleString()} rows -> ${MATRIX_PATH}`);
+  console.log(`[numberbatch] wrote ${row.toLocaleString()} index lines -> ${INDEX_PATH}`);
+
+  await new Promise<void>((res, rej) => {
+    const meta = createWriteStream(META_PATH);
+    meta.write(JSON.stringify({ dim: DIM, rows: row, format: "tsv-v1" }));
+    meta.end();
+    meta.on("close", () => res());
+    meta.on("error", rej);
+  });
+  console.log(`[done] ${META_PATH}`);
 }
 
 main().catch((err) => {

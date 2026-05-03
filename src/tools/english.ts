@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { datamuseRequest } from "../client.js";
-import { localRhymes, localSoundsLike } from "../data/local-store.js";
+import {
+  localRhymes,
+  localSoundsLike,
+  localNumberbatchNeighbors,
+} from "../data/local-store.js";
 
 interface DatamuseWord {
   word: string;
@@ -56,23 +60,44 @@ export const englishTools = [
   {
     name: "dictionary_means_like",
     description:
-      "Find English words/phrases meaning approximately the same as the input. Powered by Datamuse's ML-based 'ml' parameter -- broader than strict synonyms.",
+      "Find words/phrases meaning approximately the same as the input. For English, uses Datamuse's ML-based 'ml' parameter. With offline Numberbatch embeddings installed, falls back to multilingual embedding-based search for non-English queries (any language Numberbatch covers — 78 languages).",
     inputSchema: z.object({
       query: z.string().describe("The word or phrase"),
+      language: z
+        .string()
+        .default("en")
+        .describe(
+          "ISO 639-1 language code. Datamuse only handles English; other languages route through embeddings if installed."
+        ),
       limit: z.number().int().min(1).max(1000).default(50),
       includeDefinitions: z
         .boolean()
         .default(false)
-        .describe("Include short definitions in results"),
+        .describe("Include short definitions in results (English/Datamuse only)"),
     }),
     handler: async (args: {
       query: string;
+      language?: string;
       limit?: number;
       includeDefinitions?: boolean;
     }) => {
+      const lang = args.language ?? "en";
+      const limit = args.limit ?? 50;
+      if (lang !== "en") {
+        const neighbors = localNumberbatchNeighbors(args.query, lang, limit);
+        if (neighbors === undefined) {
+          throw new Error(
+            `dictionary_means_like for language '${lang}' requires offline Numberbatch embeddings. Either set MDM_PROFILE=medium/full, or query English (which uses Datamuse).`
+          );
+        }
+        return neighbors.map((n) => ({
+          word: n.concept.split("/").pop()?.replace(/_/g, " ") ?? n.concept,
+          score: Math.round(n.similarity * 100000),
+        }));
+      }
       const params: Record<string, string | number> = {
         ml: args.query,
-        max: args.limit ?? 50,
+        max: limit,
       };
       if (args.includeDefinitions) params.md = "d";
       return datamuseRequest<DatamuseWord[]>("/words", params);

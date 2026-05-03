@@ -4,8 +4,12 @@ import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 
 export const ROOT = resolve(__dirname, "..");
-export const BUILD_DIR = resolve(ROOT, "build");
-export const DOWNLOAD_DIR = resolve(ROOT, "downloads");
+export const BUILD_DIR = process.env.MDM_BUILD_DIR
+  ? resolve(process.env.MDM_BUILD_DIR)
+  : resolve(ROOT, "build");
+export const DOWNLOAD_DIR = process.env.MDM_DOWNLOAD_DIR
+  ? resolve(process.env.MDM_DOWNLOAD_DIR)
+  : resolve(ROOT, "downloads");
 
 export function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });

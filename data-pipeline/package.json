@@ -8,6 +8,7 @@
     "build:numberbatch": "ts-node scripts/build-numberbatch.ts",
     "build:cmudict": "ts-node scripts/build-cmudict.ts",
     "build:wiktextract": "ts-node scripts/build-wiktextract.ts",
+    "build:wiktextract-all": "ts-node scripts/build-wiktextract-all.ts",
     "build:ngrams": "ts-node scripts/build-ngrams.ts",
     "build:manifest": "ts-node scripts/build-manifest.ts",
     "build:all": "npm run build:conceptnet && npm run build:numberbatch && npm run build:cmudict && npm run build:wiktextract && npm run build:ngrams && npm run build:manifest",
