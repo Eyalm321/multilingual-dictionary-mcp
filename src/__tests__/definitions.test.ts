@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { definitionTools } from "../tools/definitions.js";
+import { responseCache } from "../cache.js";
 
 function findTool(name: string) {
   const tool = definitionTools.find((t) => t.name === name);
@@ -12,6 +13,7 @@ describe("definition tools", () => {
 
   beforeEach(() => {
     mockFetch.mockReset();
+    responseCache.clear();
     vi.stubGlobal("fetch", mockFetch);
   });
 

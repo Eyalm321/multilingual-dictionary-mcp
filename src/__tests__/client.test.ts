@@ -6,6 +6,7 @@ import {
   conceptnetUri,
   normalizeWord,
 } from "../client.js";
+import { responseCache } from "../cache.js";
 
 describe("client helpers", () => {
   describe("normalizeWord", () => {
@@ -42,6 +43,7 @@ describe("HTTP requests", () => {
 
   beforeEach(() => {
     mockFetch.mockReset();
+    responseCache.clear();
     vi.stubGlobal("fetch", mockFetch);
   });
 

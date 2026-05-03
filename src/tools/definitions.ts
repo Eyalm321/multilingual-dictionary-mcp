@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { wiktionaryRequest } from "../client.js";
+import { httpGet, wiktionaryRequest } from "../client.js";
 
 interface WiktionaryDefinitionEntry {
   partOfSpeech: string;
@@ -124,20 +124,8 @@ export const definitionTools = [
     }),
     handler: async (args: { word: string; wiktionaryLanguage?: string }) => {
       const wikLang = args.wiktionaryLanguage ?? "en";
-      const path = `/api/rest_v1/page/summary/${encodeURIComponent(args.word)}`;
-      const customBase = `https://${wikLang}.wiktionary.org`;
-      const res = await fetch(`${customBase}${path}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent":
-            "multilingual-dictionary-mcp/0.1 (https://github.com/Eyalm321/multilingual-dictionary-mcp)",
-        },
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Wiktionary summary failed ${res.status}: ${text}`);
-      }
-      return res.json();
+      const url = `https://${wikLang}.wiktionary.org/api/rest_v1/page/summary/${encodeURIComponent(args.word)}`;
+      return httpGet<unknown>(url);
     },
   },
   {
@@ -153,26 +141,16 @@ export const definitionTools = [
     }),
     handler: async (args: { word: string; wiktionaryLanguage?: string }) => {
       const wikLang = args.wiktionaryLanguage ?? "en";
-      const url = `https://${wikLang}.wiktionary.org/w/api.php`;
-      const params = new URLSearchParams({
-        action: "parse",
-        page: args.word,
-        prop: "wikitext",
-        format: "json",
-        formatversion: "2",
-      });
-      const res = await fetch(`${url}?${params.toString()}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent":
-            "multilingual-dictionary-mcp/0.1 (https://github.com/Eyalm321/multilingual-dictionary-mcp)",
-        },
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Wiktionary etymology failed ${res.status}: ${text}`);
-      }
-      const data = (await res.json()) as MediaWikiQueryResponse;
+      const data = await httpGet<MediaWikiQueryResponse>(
+        `https://${wikLang}.wiktionary.org/w/api.php`,
+        {
+          action: "parse",
+          page: args.word,
+          prop: "wikitext",
+          format: "json",
+          formatversion: "2",
+        }
+      );
       const wikitext =
         typeof data.parse?.wikitext === "string"
           ? data.parse?.wikitext
@@ -200,26 +178,16 @@ export const definitionTools = [
     }),
     handler: async (args: { word: string; wiktionaryLanguage?: string }) => {
       const wikLang = args.wiktionaryLanguage ?? "en";
-      const url = `https://${wikLang}.wiktionary.org/w/api.php`;
-      const params = new URLSearchParams({
-        action: "parse",
-        page: args.word,
-        prop: "wikitext",
-        format: "json",
-        formatversion: "2",
-      });
-      const res = await fetch(`${url}?${params.toString()}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent":
-            "multilingual-dictionary-mcp/0.1 (https://github.com/Eyalm321/multilingual-dictionary-mcp)",
-        },
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Wiktionary pronunciation failed ${res.status}: ${text}`);
-      }
-      const data = (await res.json()) as MediaWikiQueryResponse;
+      const data = await httpGet<MediaWikiQueryResponse>(
+        `https://${wikLang}.wiktionary.org/w/api.php`,
+        {
+          action: "parse",
+          page: args.word,
+          prop: "wikitext",
+          format: "json",
+          formatversion: "2",
+        }
+      );
       const wikitext =
         typeof data.parse?.wikitext === "string"
           ? data.parse?.wikitext
@@ -252,26 +220,16 @@ export const definitionTools = [
       limit?: number;
     }) => {
       const wikLang = args.wiktionaryLanguage ?? "en";
-      const url = `https://${wikLang}.wiktionary.org/w/api.php`;
-      const params = new URLSearchParams({
-        action: "opensearch",
-        search: args.query,
-        limit: String(args.limit ?? 10),
-        format: "json",
-        formatversion: "2",
-      });
-      const res = await fetch(`${url}?${params.toString()}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent":
-            "multilingual-dictionary-mcp/0.1 (https://github.com/Eyalm321/multilingual-dictionary-mcp)",
-        },
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Wiktionary search failed ${res.status}: ${text}`);
-      }
-      const data = (await res.json()) as [string, string[], string[], string[]];
+      const data = await httpGet<[string, string[], string[], string[]]>(
+        `https://${wikLang}.wiktionary.org/w/api.php`,
+        {
+          action: "opensearch",
+          search: args.query,
+          limit: args.limit ?? 10,
+          format: "json",
+          formatversion: "2",
+        }
+      );
       const [, titles, descriptions, urls] = data;
       return titles.map((title, i) => ({
         title,
@@ -292,29 +250,20 @@ export const definitionTools = [
     }),
     handler: async (args: { wiktionaryLanguage?: string }) => {
       const wikLang = args.wiktionaryLanguage ?? "en";
-      const url = `https://${wikLang}.wiktionary.org/w/api.php`;
-      const params = new URLSearchParams({
-        action: "query",
-        list: "random",
-        rnnamespace: "0",
-        rnlimit: "1",
-        format: "json",
-        formatversion: "2",
-      });
-      const res = await fetch(`${url}?${params.toString()}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent":
-            "multilingual-dictionary-mcp/0.1 (https://github.com/Eyalm321/multilingual-dictionary-mcp)",
-        },
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Wiktionary random failed ${res.status}: ${text}`);
-      }
-      const data = (await res.json()) as {
+      const data = await httpGet<{
         query?: { random?: Array<{ id: number; title: string }> };
-      };
+      }>(
+        `https://${wikLang}.wiktionary.org/w/api.php`,
+        {
+          action: "query",
+          list: "random",
+          rnnamespace: "0",
+          rnlimit: "1",
+          format: "json",
+          formatversion: "2",
+        },
+        { bypassCache: true }
+      );
       return data.query?.random ?? [];
     },
   },

@@ -1,13 +1,16 @@
+import { responseCache } from "./cache.js";
+
 const CONCEPTNET_BASE = process.env.CONCEPTNET_BASE_URL || "https://api.conceptnet.io";
 const WIKTIONARY_BASE = process.env.WIKTIONARY_BASE_URL || "https://en.wiktionary.org";
 const DATAMUSE_BASE = process.env.DATAMUSE_BASE_URL || "https://api.datamuse.com";
 
 const USER_AGENT =
-  "multilingual-dictionary-mcp/0.1 (https://github.com/Eyalm321/multilingual-dictionary-mcp)";
+  "multilingual-dictionary-mcp/0.2 (https://github.com/Eyalm321/multilingual-dictionary-mcp)";
 
-async function httpGet<T>(
+export async function httpGet<T>(
   url: string,
-  params?: Record<string, string | number | boolean | undefined>
+  params?: Record<string, string | number | boolean | undefined>,
+  options?: { bypassCache?: boolean }
 ): Promise<T> {
   const u = new URL(url);
   if (params) {
@@ -18,7 +21,13 @@ async function httpGet<T>(
     }
   }
 
-  const res = await fetch(u.toString(), {
+  const cacheKey = u.toString();
+  if (!options?.bypassCache) {
+    const cached = responseCache.get<T>(cacheKey);
+    if (cached !== undefined) return cached;
+  }
+
+  const res = await fetch(cacheKey, {
     method: "GET",
     headers: {
       Accept: "application/json",
@@ -28,10 +37,12 @@ async function httpGet<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Request failed ${res.status} for ${u.toString()}: ${text}`);
+    throw new Error(`Request failed ${res.status} for ${cacheKey}: ${text}`);
   }
 
-  return res.json() as Promise<T>;
+  const json = (await res.json()) as T;
+  if (!options?.bypassCache) responseCache.set(cacheKey, json);
+  return json;
 }
 
 export async function conceptnetRequest<T>(

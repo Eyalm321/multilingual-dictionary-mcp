@@ -1,6 +1,6 @@
 {
   "name": "@eyalm321/multilingual-dictionary-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for multilingual dictionary lookups with word relations (synonyms, antonyms, hypernyms, translations, etc.) covering all languages via ConceptNet, Wiktionary, and Datamuse",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"

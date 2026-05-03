@@ -2,8 +2,14 @@ import { describe, it, expect } from "vitest";
 import { relationTools } from "../tools/relations.js";
 import { definitionTools } from "../tools/definitions.js";
 import { englishTools } from "../tools/english.js";
+import { adminTools } from "../tools/admin.js";
 
-const allTools = [...relationTools, ...definitionTools, ...englishTools];
+const allTools = [
+  ...relationTools,
+  ...definitionTools,
+  ...englishTools,
+  ...adminTools,
+];
 
 describe("Tool Registration", () => {
   it("has no duplicate tool names across all modules", () => {
@@ -32,7 +38,7 @@ describe("Tool Registration", () => {
   });
 
   it("each module exports a non-empty array", () => {
-    const modules = [relationTools, definitionTools, englishTools];
+    const modules = [relationTools, definitionTools, englishTools, adminTools];
     for (const mod of modules) {
       expect(Array.isArray(mod)).toBe(true);
       expect(mod.length).toBeGreaterThan(0);

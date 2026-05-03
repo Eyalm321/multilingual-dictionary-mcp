@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { relationTools } from "../tools/relations.js";
+import { responseCache } from "../cache.js";
 
 function findTool(name: string) {
   const tool = relationTools.find((t) => t.name === name);
@@ -12,6 +13,7 @@ describe("relation tools", () => {
 
   beforeEach(() => {
     mockFetch.mockReset();
+    responseCache.clear();
     vi.stubGlobal("fetch", mockFetch);
   });
 

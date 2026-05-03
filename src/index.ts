@@ -4,13 +4,19 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { relationTools } from "./tools/relations.js";
 import { definitionTools } from "./tools/definitions.js";
 import { englishTools } from "./tools/english.js";
+import { adminTools } from "./tools/admin.js";
 
 const server = new McpServer({
   name: "multilingual-dictionary-mcp",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
-const allTools = [...relationTools, ...definitionTools, ...englishTools];
+const allTools = [
+  ...relationTools,
+  ...definitionTools,
+  ...englishTools,
+  ...adminTools,
+];
 
 for (const tool of allTools) {
   server.tool(

@@ -86,6 +86,32 @@ All of these accept a `word`, an ISO 639-1 `language` code (defaults to `en`), a
 | `dictionary_follows` | Words that commonly follow (drink → coffee) |
 | `dictionary_precedes` | Words that commonly precede (audience → captive) |
 
+### Cache management
+
+| Tool | Description |
+| --- | --- |
+| `dictionary_cache_stats` | Inspect hits/misses/size of the in-memory response cache |
+| `dictionary_cache_clear` | Force fresh upstream lookups by clearing the cache |
+
+---
+
+## Caching
+
+Every successful upstream response is cached **in memory** for the lifetime of the server process, keyed by the full request URL. Identical follow-up calls within the same session return instantly without hitting ConceptNet/Wiktionary/Datamuse again.
+
+- Default TTL: **24 hours**
+- Default max entries: **5000** (LRU eviction)
+- Disabled for `dictionary_random` (which is supposed to vary)
+- No disk persistence — cache is rebuilt on each server start
+
+Tune via env vars:
+
+```bash
+MDM_DISABLE_CACHE=true        # turn caching off
+MDM_CACHE_TTL_MS=3600000      # 1 hour TTL
+MDM_CACHE_MAX_ENTRIES=10000   # bigger cache
+```
+
 ---
 
 ## Examples
