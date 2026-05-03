@@ -8,7 +8,7 @@ import { ensureDataInstalled } from "./data/installer.js";
 
 const server = new McpServer({
   name: "multilingual-dictionary-mcp",
-  version: "0.3.0",
+  version: "0.3.1",
 });
 
 const allTools = [...relationTools, ...definitionTools, ...englishTools];
