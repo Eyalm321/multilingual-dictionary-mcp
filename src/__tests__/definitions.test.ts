@@ -24,7 +24,7 @@ describe("definition tools — offline-only behavior", () => {
           : name === "dictionary_random"
           ? {}
           : { word: "happy" };
-      await expect(tool.handler(args as any)).rejects.toThrow(/MDM_PROFILE/);
+      await expect(tool.handler(args as any)).rejects.toThrow(/offline|CDN/);
     });
   }
 });

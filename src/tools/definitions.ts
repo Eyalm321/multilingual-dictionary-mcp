@@ -39,7 +39,7 @@ function shapeEntry(row: WiktextractRow) {
 function requireLocal<T>(value: T | undefined, what: string): T {
   if (value === undefined) {
     throw new Error(
-      `${what} requires the offline Wiktextract data. Run with MDM_PROFILE=medium or full so the dictionary downloads from the CDN on first start.`
+      `${what} requires the offline Wiktextract data. The bundle should download automatically from the CDN on first start.`
     );
   }
   return value;

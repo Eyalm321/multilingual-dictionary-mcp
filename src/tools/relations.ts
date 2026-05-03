@@ -46,7 +46,7 @@ function fetchRelation(
   const local = localConceptNetEdges({ word, language, rel, direction, limit });
   if (local === undefined) {
     throw new Error(
-      "ConceptNet relation lookup requires the offline data. Run with MDM_PROFILE=medium or full so it downloads from the CDN on first start."
+      "ConceptNet relation lookup requires the offline data. The bundle should download automatically from the CDN on first start."
     );
   }
   return local.map((e) => localEdgeToResult(e, word, language));
@@ -134,7 +134,7 @@ export const relationTools = [
       });
       if (neighbors === undefined) {
         throw new Error(
-          "Numberbatch embeddings not installed. Run with MDM_PROFILE=medium or full."
+          "Numberbatch embeddings not installed. The bundle should download automatically on server start."
         );
       }
       return neighbors.map((n) => ({
@@ -275,7 +275,7 @@ export const relationTools = [
       });
       if (local === undefined) {
         throw new Error(
-          "dictionary_translate requires the offline ConceptNet data. Run with MDM_PROFILE=medium or full."
+          "dictionary_translate requires the offline ConceptNet data. The bundle should download automatically on server start."
         );
       }
       return local
@@ -302,7 +302,7 @@ export const relationTools = [
       });
       if (local === undefined) {
         throw new Error(
-          "dictionary_all_relations requires the offline ConceptNet data. Run with MDM_PROFILE=medium or full."
+          "dictionary_all_relations requires the offline ConceptNet data. The bundle should download automatically on server start."
         );
       }
       return local.map((e) => localEdgeToResult(e, args.word, lang));

@@ -15,15 +15,9 @@ No third-party APIs. No rate limits. No outages. The server downloads its data f
 
 Total bundle: **~21 GB** (medium profile, default).
 
-## Install profiles
+## One bundle, one download
 
-| Profile | Size | What it covers |
-| --- | --- | --- |
-| `small` | ~5 MB | English rhymes/soundalikes only (CMU dict) |
-| `medium` (default) | ~16 GB | Everything except per-language Wiktextract (uses the comprehensive 4,755-language SQLite) |
-| `full` | ~21 GB | Adds per-language Wiktextract SQLites for fast targeted queries |
-
-Set with `MDM_PROFILE=small|medium|full` (default `medium`).
+The whole bundle ships in 6 artifacts. Total **5.4 GB on the wire** (gzip-compressed where it helps), **15.6 GB on disk** after extraction. Everything downloads on first run; no profiles, no opt-ins.
 
 ## Installation
 
@@ -44,7 +38,7 @@ npm install -g multilingual-dictionary-mcp
 }
 ```
 
-On first run, the server downloads its data bundle from `multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com` into `~/.cache/multilingual-dictionary-mcp/` (overridable via `MDM_DATA_DIR`). SHA-256 verified per artifact. **Expect a one-time ~16 GB download — go make coffee.** Subsequent runs are instant.
+On first run, the server downloads its data bundle (~5.4 GB compressed → ~15.6 GB on disk) from `multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com` into `~/.cache/multilingual-dictionary-mcp/` (overridable via `MDM_DATA_DIR`). Each artifact is gzip-decompressed during the stream and SHA-256 verified. Subsequent runs are instant.
 
 ## Tools
 

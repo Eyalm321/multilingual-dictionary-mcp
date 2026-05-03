@@ -10,7 +10,7 @@ import {
 function requireLocal<T>(value: T | undefined, what: string): T {
   if (value === undefined) {
     throw new Error(
-      `${what} requires the offline data. Run with MDM_PROFILE=medium or full.`
+      `${what} requires the offline data. The bundle should download automatically on server start.`
     );
   }
   return value;

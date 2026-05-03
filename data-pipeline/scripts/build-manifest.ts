@@ -1,62 +1,77 @@
 /**
  * Walks build/ and produces a manifest.json with each artifact's
- * filename, size, sha256, content-type, and the install profile it belongs to.
+ * filename, decompressed and compressed sizes + sha256, and content-type.
  *
- * Profiles:
- *   small  — cmudict
- *   medium — small + conceptnet + numberbatch + 5 wiktextract langs
- *   full   — medium + all wiktextract langs + ngrams
- *
- * The runtime installer downloads only the chunks the user has opted into.
+ * The runtime installer downloads ALL artifacts in the manifest. There's
+ * no profile system — the bundle is what it is. It prefers compressedUrl
+ * when present (gzip-decoding stream to disk), falling back to url for
+ * files that aren't worth compressing (numberbatch.bin).
  */
-import { readdirSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { BUILD_DIR } from "./common";
-import { sha256OfFile } from "./common";
+import { BUILD_DIR, sha256OfFile } from "./common";
 
-const MANIFEST_VERSION = 1;
+const MANIFEST_VERSION = 3;
 const CDN_BASE =
   process.env.MDM_CDN_BASE ||
   "https://multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com";
-
-function profileFor(filename: string): "small" | "medium" | "full" {
-  if (filename.startsWith("cmudict")) return "small";
-  if (filename.startsWith("conceptnet")) return "medium";
-  if (filename.startsWith("numberbatch")) return "medium";
-  // Comprehensive 4,755-language Wiktextract is the medium-profile data.
-  if (filename.startsWith("wiktextract-all")) return "medium";
-  // Per-language Wiktextract SQLites are the "full" profile bonus —
-  // smaller, faster targeted queries for users who want them.
-  if (filename.startsWith("wiktextract-")) return "full";
-  if (filename.startsWith("ngrams")) return "full";
-  return "full";
-}
 
 interface Artifact {
   name: string;
   url: string;
   size: number;
   sha256: string;
-  profile: "small" | "medium" | "full";
+  compressedUrl?: string;
+  compressedSize?: number;
+  compressedSha256?: string;
 }
 
 async function main() {
   const artifacts: Artifact[] = [];
-  for (const name of readdirSync(BUILD_DIR)) {
-    if (name === "manifest.json") continue;
+  const allNames = readdirSync(BUILD_DIR);
+  const decompressedNames = allNames.filter((n) => {
+    if (n === "manifest.json") return false;
+    if (n.endsWith(".gz")) return false;
+    return statSync(resolve(BUILD_DIR, n)).isFile();
+  });
+
+  for (const name of decompressedNames) {
     const path = resolve(BUILD_DIR, name);
-    if (!statSync(path).isFile()) continue;
     const size = statSync(path).size;
     const sha256 = await sha256OfFile(path);
+    const gzPath = resolve(BUILD_DIR, `${name}.gz`);
+    let compressed:
+      | { url: string; size: number; sha256: string }
+      | undefined;
+    if (existsSync(gzPath)) {
+      const gzSize = statSync(gzPath).size;
+      // Skip the compressed version if it's not meaningfully smaller —
+      // tiny files have gzip header overhead that exceeds savings.
+      if (gzSize < size * 0.95) {
+        const gzSha = await sha256OfFile(gzPath);
+        compressed = {
+          url: `${CDN_BASE}/${name}.gz`,
+          size: gzSize,
+          sha256: gzSha,
+        };
+      }
+    }
     artifacts.push({
       name,
       url: `${CDN_BASE}/${name}`,
       size,
       sha256,
-      profile: profileFor(name),
+      compressedUrl: compressed?.url,
+      compressedSize: compressed?.size,
+      compressedSha256: compressed?.sha256,
     });
-    console.log(`  ${name} (${(size / 1_000_000).toFixed(1)} MB) — ${profileFor(name)}`);
+    const origMb = (size / 1_000_000).toFixed(1);
+    const gzMb = compressed ? (compressed.size / 1_000_000).toFixed(1) : "—";
+    console.log(
+      `  ${name.padEnd(28)} ${origMb.padStart(8)} MB / gz ${gzMb.padStart(7)} MB`
+    );
   }
+
   const manifest = {
     version: MANIFEST_VERSION,
     builtAt: new Date().toISOString(),
@@ -65,7 +80,14 @@ async function main() {
   };
   const manifestPath = resolve(BUILD_DIR, "manifest.json");
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-  console.log(`[done] ${manifestPath} (${artifacts.length} artifacts)`);
+  const totalOrig = artifacts.reduce((s, a) => s + a.size, 0);
+  const totalGz = artifacts.reduce(
+    (s, a) => s + (a.compressedSize ?? a.size),
+    0
+  );
+  console.log(
+    `[done] ${manifestPath} — ${artifacts.length} artifacts, ${(totalOrig / 1_000_000_000).toFixed(2)} GB raw, ${(totalGz / 1_000_000_000).toFixed(2)} GB on the wire`
+  );
 }
 
 main().catch((err) => {

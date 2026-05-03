@@ -29,7 +29,7 @@ describe("relation tools — offline-only behavior", () => {
       const tool = findTool(name);
       await expect(
         tool.handler({ word: "happy", language: "en" } as any)
-      ).rejects.toThrow(/MDM_PROFILE/);
+      ).rejects.toThrow(/offline|CDN/);
     });
   }
 
@@ -44,6 +44,6 @@ describe("relation tools — offline-only behavior", () => {
     const tool = findTool("dictionary_related");
     await expect(
       tool.handler({ word: "happy", language: "en" })
-    ).rejects.toThrow(/MDM_PROFILE/);
+    ).rejects.toThrow(/offline|CDN/);
   });
 });
