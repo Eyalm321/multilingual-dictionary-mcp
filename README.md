@@ -95,6 +95,31 @@ All of these accept a `word`, an ISO 639-1 `language` code (defaults to `en`), a
 
 ---
 
+## Offline mode (v0.3+)
+
+Set `MDM_PROFILE` to bundle local data and stop depending on upstream APIs:
+
+| Profile | Size | Coverage |
+| --- | --- | --- |
+| `online` (default) | 0 | network-only, hits ConceptNet/Wiktionary/Datamuse live |
+| `small` | ~5 MB | CMU dict only — local rhymes/sounds-like, everything else still online |
+| `medium` | ~3 GB | + ConceptNet 5.7 SQLite + Numberbatch embeddings + 5 Wiktextract languages |
+| `full` | ~20 GB | + all Wiktextract languages + n-gram corpus for triggers/follows/precedes |
+
+```bash
+MDM_PROFILE=medium npx multilingual-dictionary-mcp
+```
+
+On first run, the server downloads the configured profile's artifacts from the public CDN at `https://multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com` into `~/.cache/multilingual-dictionary-mcp/` (overridable via `MDM_DATA_DIR`). Subsequent runs use cached files. SHA-256 verification on every artifact.
+
+When local data is present, tools query SQLite/binary matrices directly. When it isn't (or the profile is `online`), they fall back to the live APIs. So a partial install just means partial offline coverage — nothing breaks.
+
+The `better-sqlite3` package is an `optionalDependencies` — if it fails to compile during `npm install`, the package still installs but offline mode silently falls back to online.
+
+### Building the data bundle yourself
+
+The CDN ships official builds, but the entire pipeline is in [`data-pipeline/`](data-pipeline/) so you can rebuild from upstream sources or ship your own bucket. See [`data-pipeline/README.md`](data-pipeline/README.md).
+
 ## Caching
 
 Every successful upstream response is cached **in memory** for the lifetime of the server process, keyed by the full request URL. Identical follow-up calls within the same session return instantly without hitting ConceptNet/Wiktionary/Datamuse again.

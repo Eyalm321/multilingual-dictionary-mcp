@@ -5,10 +5,11 @@ import { relationTools } from "./tools/relations.js";
 import { definitionTools } from "./tools/definitions.js";
 import { englishTools } from "./tools/english.js";
 import { adminTools } from "./tools/admin.js";
+import { ensureDataInstalled } from "./data/installer.js";
 
 const server = new McpServer({
   name: "multilingual-dictionary-mcp",
-  version: "0.2.0",
+  version: "0.3.0",
 });
 
 const allTools = [
@@ -43,6 +44,13 @@ for (const tool of allTools) {
 }
 
 async function main() {
+  // If MDM_PROFILE is set to anything other than "online", kick off the
+  // first-run install in the background. The first lookup may go online while
+  // data is still downloading; subsequent ones use local data.
+  ensureDataInstalled().catch((err) => {
+    console.error("[mdm-data] install failed (continuing online):", err);
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Multilingual Dictionary MCP server running");

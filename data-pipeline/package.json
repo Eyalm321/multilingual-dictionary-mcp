@@ -1,0 +1,27 @@
+{
+  "name": "multilingual-dictionary-mcp-data-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build and publish the offline data bundle for multilingual-dictionary-mcp",
+  "scripts": {
+    "build:conceptnet": "ts-node scripts/build-conceptnet.ts",
+    "build:numberbatch": "ts-node scripts/build-numberbatch.ts",
+    "build:cmudict": "ts-node scripts/build-cmudict.ts",
+    "build:wiktextract": "ts-node scripts/build-wiktextract.ts",
+    "build:ngrams": "ts-node scripts/build-ngrams.ts",
+    "build:manifest": "ts-node scripts/build-manifest.ts",
+    "build:all": "npm run build:conceptnet && npm run build:numberbatch && npm run build:cmudict && npm run build:wiktextract && npm run build:ngrams && npm run build:manifest",
+    "upload": "ts-node scripts/upload.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/lib-storage": "^3.0.0",
+    "better-sqlite3": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^25.5.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
+  }
+}

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { datamuseRequest } from "../client.js";
+import { localRhymes, localSoundsLike } from "../data/local-store.js";
 
 interface DatamuseWord {
   word: string;
@@ -23,9 +24,13 @@ export const englishTools = [
         .describe("Perfect rhymes (true) vs near/approximate rhymes (false)"),
     }),
     handler: async (args: { word: string; limit?: number; perfect?: boolean }) => {
+      const limit = args.limit ?? 50;
+      const perfect = args.perfect !== false;
+      const local = localRhymes(args.word, perfect, limit);
+      if (local !== undefined) return local;
       const params = {
-        [args.perfect === false ? "rel_nry" : "rel_rhy"]: args.word,
-        max: args.limit ?? 50,
+        [perfect ? "rel_rhy" : "rel_nry"]: args.word,
+        max: limit,
       };
       return datamuseRequest<DatamuseWord[]>("/words", params);
     },
@@ -39,9 +44,12 @@ export const englishTools = [
       limit: z.number().int().min(1).max(1000).default(50),
     }),
     handler: async (args: { word: string; limit?: number }) => {
+      const limit = args.limit ?? 50;
+      const local = localSoundsLike(args.word, limit);
+      if (local !== undefined) return local;
       return datamuseRequest<DatamuseWord[]>("/words", {
         sl: args.word,
-        max: args.limit ?? 50,
+        max: limit,
       });
     },
   },

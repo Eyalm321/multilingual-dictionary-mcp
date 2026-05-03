@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { conceptnetRequest, conceptnetUri } from "../client.js";
+import { localConceptNetEdges, LocalEdge } from "../data/local-store.js";
 
 interface ConceptNetEdge {
   "@id": string;
@@ -53,6 +54,26 @@ function summarizeEdge(
   };
 }
 
+function localEdgeToResult(
+  edge: LocalEdge,
+  queryWord: string,
+  queryLang: string
+): RelationResult {
+  const queryIsStart =
+    edge.startLang === queryLang &&
+    edge.startLabel.toLowerCase() === queryWord.toLowerCase();
+  return {
+    word: queryWord,
+    language: queryLang,
+    relation: edge.rel,
+    weight: edge.weight,
+    source: queryIsStart ? edge.startLabel : edge.endLabel,
+    target: queryIsStart ? edge.endLabel : edge.startLabel,
+    targetLanguage: queryIsStart ? edge.endLang : edge.startLang,
+    surfaceText: edge.surfaceText || undefined,
+  };
+}
+
 async function fetchEdges(
   word: string,
   language: string,
@@ -60,11 +81,15 @@ async function fetchEdges(
   limit: number,
   direction: "start" | "end" | "any" = "any"
 ): Promise<RelationResult[]> {
+  const local = localConceptNetEdges({ word, language, rel, direction, limit });
+  if (local !== undefined) {
+    return local.map((e) => localEdgeToResult(e, word, language));
+  }
+
   const params: Record<string, string | number> = {
     rel: `/r/${rel}`,
     limit,
   };
-
   const node = conceptnetUri(word, language);
   if (direction === "start") {
     params.start = node;
@@ -73,7 +98,6 @@ async function fetchEdges(
   } else {
     params.node = node;
   }
-
   const data = await conceptnetRequest<ConceptNetResponse>("/query", params);
   return (data.edges || []).map((edge) => summarizeEdge(edge, word, language));
 }
@@ -334,11 +358,26 @@ export const relationTools = [
       limit?: number;
     }) => {
       const lang = args.language ?? "en";
+      const limit = args.limit ?? 50;
+      const local = localConceptNetEdges({
+        word: args.word,
+        language: lang,
+        rel: "Synonym",
+        direction: "any",
+        otherLanguage: args.targetLanguage,
+        limit,
+      });
+      if (local !== undefined) {
+        return local
+          .map((e) => localEdgeToResult(e, args.word, lang))
+          .filter((r) => r.targetLanguage && r.targetLanguage !== lang);
+      }
+
       const node = conceptnetUri(args.word, lang);
       const params: Record<string, string | number> = {
         node,
         rel: "/r/Synonym",
-        limit: args.limit ?? 50,
+        limit,
       };
       if (args.targetLanguage) {
         params.other = `/c/${args.targetLanguage}`;
