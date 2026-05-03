@@ -19,16 +19,15 @@ const CDN_BASE =
   process.env.MDM_CDN_BASE ||
   "https://multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com";
 
-const MEDIUM_LANGS = ["english", "spanish", "french", "italian", "portuguese"];
-
 function profileFor(filename: string): "small" | "medium" | "full" {
   if (filename.startsWith("cmudict")) return "small";
   if (filename.startsWith("conceptnet")) return "medium";
   if (filename.startsWith("numberbatch")) return "medium";
-  if (filename.startsWith("wiktextract-")) {
-    const lang = filename.replace(/^wiktextract-/, "").replace(/\..*$/, "");
-    return MEDIUM_LANGS.includes(lang) ? "medium" : "full";
-  }
+  // Comprehensive 4,755-language Wiktextract is the medium-profile data.
+  if (filename.startsWith("wiktextract-all")) return "medium";
+  // Per-language Wiktextract SQLites are the "full" profile bonus —
+  // smaller, faster targeted queries for users who want them.
+  if (filename.startsWith("wiktextract-")) return "full";
   if (filename.startsWith("ngrams")) return "full";
   return "full";
 }
@@ -44,6 +43,7 @@ interface Artifact {
 async function main() {
   const artifacts: Artifact[] = [];
   for (const name of readdirSync(BUILD_DIR)) {
+    if (name === "manifest.json") continue;
     const path = resolve(BUILD_DIR, name);
     if (!statSync(path).isFile()) continue;
     const size = statSync(path).size;
