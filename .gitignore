@@ -6,3 +6,4 @@ data-pipeline/build/
 data-pipeline/downloads/
 data-pipeline/dist/
 data-pipeline/node_modules/
+.claude/
