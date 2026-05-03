@@ -4,6 +4,7 @@ import {
   LocalEdge,
   localNumberbatchNeighbors,
 } from "../data/local-store.js";
+import { dataInstallSummary } from "../data/installer.js";
 
 interface RelationResult {
   word: string;
@@ -46,7 +47,7 @@ function fetchRelation(
   const local = localConceptNetEdges({ word, language, rel, direction, limit });
   if (local === undefined) {
     throw new Error(
-      "ConceptNet relation lookup requires the offline data. The bundle should download automatically from the CDN on first start."
+      `ConceptNet relation lookup needs the offline data. Install state: ${dataInstallSummary()}. Use dictionary_status to track progress.`
     );
   }
   return local.map((e) => localEdgeToResult(e, word, language));
@@ -134,7 +135,7 @@ export const relationTools = [
       });
       if (neighbors === undefined) {
         throw new Error(
-          "Numberbatch embeddings not installed. The bundle should download automatically on server start."
+          `Numberbatch embeddings not yet available. Install state: ${dataInstallSummary()}. Use dictionary_status to track progress.`
         );
       }
       return neighbors.map((n) => ({
@@ -275,7 +276,7 @@ export const relationTools = [
       });
       if (local === undefined) {
         throw new Error(
-          "dictionary_translate requires the offline ConceptNet data. The bundle should download automatically on server start."
+          `dictionary_translate needs the offline ConceptNet data. Install state: ${dataInstallSummary()}. Use dictionary_status to track progress.`
         );
       }
       return local
@@ -302,7 +303,7 @@ export const relationTools = [
       });
       if (local === undefined) {
         throw new Error(
-          "dictionary_all_relations requires the offline ConceptNet data. The bundle should download automatically on server start."
+          `dictionary_all_relations needs the offline ConceptNet data. Install state: ${dataInstallSummary()}. Use dictionary_status to track progress.`
         );
       }
       return local.map((e) => localEdgeToResult(e, args.word, lang));

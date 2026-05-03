@@ -6,11 +6,12 @@ import {
   localSuggest,
   localNumberbatchNeighbors,
 } from "../data/local-store.js";
+import { dataInstallSummary } from "../data/installer.js";
 
 function requireLocal<T>(value: T | undefined, what: string): T {
   if (value === undefined) {
     throw new Error(
-      `${what} requires the offline data. The bundle should download automatically on server start.`
+      `${what} needs the offline data. Install state: ${dataInstallSummary()}. Use dictionary_status to track progress.`
     );
   }
   return value;

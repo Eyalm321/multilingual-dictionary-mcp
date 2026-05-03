@@ -5,6 +5,7 @@ import {
   localWiktextractRandom,
   WiktextractRow,
 } from "../data/local-store.js";
+import { dataInstallSummary } from "../data/installer.js";
 
 interface SenseFromWiktextract {
   glosses?: string[];
@@ -39,7 +40,7 @@ function shapeEntry(row: WiktextractRow) {
 function requireLocal<T>(value: T | undefined, what: string): T {
   if (value === undefined) {
     throw new Error(
-      `${what} requires the offline Wiktextract data. The bundle should download automatically from the CDN on first start.`
+      `${what} needs the offline Wiktextract data. Install state: ${dataInstallSummary()}. Use dictionary_status to track progress.`
     );
   }
   return value;

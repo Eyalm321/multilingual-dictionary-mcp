@@ -4,14 +4,22 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { relationTools } from "./tools/relations.js";
 import { definitionTools } from "./tools/definitions.js";
 import { englishTools } from "./tools/english.js";
+import { statusTools } from "./tools/status.js";
 import { ensureDataInstalled } from "./data/installer.js";
 
 const server = new McpServer({
   name: "multilingual-dictionary-mcp",
-  version: "0.3.1",
+  version: "0.3.2",
 });
 
-const allTools = [...relationTools, ...definitionTools, ...englishTools];
+// Status tools first so they're registered alphabetically before any tools
+// that depend on the offline data — purely cosmetic for tool listings.
+const allTools = [
+  ...statusTools,
+  ...relationTools,
+  ...definitionTools,
+  ...englishTools,
+];
 
 for (const tool of allTools) {
   server.tool(
@@ -38,14 +46,19 @@ for (const tool of allTools) {
 }
 
 async function main() {
-  // Block on first-run install. The package is offline-first — every tool
-  // requires the local data. If install fails, surface it loudly rather than
-  // silently degrading.
-  await ensureDataInstalled();
-
+  // Connect MCP transport FIRST so the client sees tools immediately. The
+  // dictionary_status and dictionary_install tools are usable even while the
+  // data bundle is still downloading.
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Multilingual Dictionary MCP server running");
+  console.error(
+    "Multilingual Dictionary MCP server running — kicking off data install in background"
+  );
+
+  // Fire-and-forget the install. Progress is observable via dictionary_status.
+  ensureDataInstalled().catch((err) => {
+    console.error("[mdm-data] install failed (continuing):", err);
+  });
 }
 
 main().catch((err) => {

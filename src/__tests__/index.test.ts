@@ -2,8 +2,14 @@ import { describe, it, expect } from "vitest";
 import { relationTools } from "../tools/relations.js";
 import { definitionTools } from "../tools/definitions.js";
 import { englishTools } from "../tools/english.js";
+import { statusTools } from "../tools/status.js";
 
-const allTools = [...relationTools, ...definitionTools, ...englishTools];
+const allTools = [
+  ...statusTools,
+  ...relationTools,
+  ...definitionTools,
+  ...englishTools,
+];
 
 describe("Tool Registration", () => {
   it("has no duplicate tool names across all modules", () => {
@@ -32,10 +38,16 @@ describe("Tool Registration", () => {
   });
 
   it("each module exports a non-empty array", () => {
-    for (const mod of [relationTools, definitionTools, englishTools]) {
+    for (const mod of [statusTools, relationTools, definitionTools, englishTools]) {
       expect(Array.isArray(mod)).toBe(true);
       expect(mod.length).toBeGreaterThan(0);
     }
+  });
+
+  it("dictionary_status and dictionary_install are present", () => {
+    const names = allTools.map((t) => t.name);
+    expect(names).toContain("dictionary_status");
+    expect(names).toContain("dictionary_install");
   });
 
   it("input schemas are zod objects with .shape", () => {
