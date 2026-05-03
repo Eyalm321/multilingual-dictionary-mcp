@@ -1,6 +1,6 @@
 {
   "name": "@eyalm321/multilingual-dictionary-mcp",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Offline-first MCP server for multilingual dictionary lookups across 4,755 languages — definitions, synonyms, antonyms, hypernyms, hyponyms, meronyms, translations, etymology, semantic neighbors, rhymes, and more. Bundles ConceptNet 5.7, Wiktextract, Numberbatch embeddings, and the CMU Pronouncing Dictionary.",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"

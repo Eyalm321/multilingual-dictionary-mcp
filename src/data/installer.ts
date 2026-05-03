@@ -5,6 +5,8 @@ import {
   statSync,
   createReadStream,
   unlinkSync,
+  writeFileSync,
+  readFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
@@ -96,20 +98,74 @@ async function sha256OfFile(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
+/**
+ * Marker file path — written next to the artifact when SHA-256 verification
+ * passes. Subsequent launches trust the cache when this marker exists, the
+ * file size matches, and mtime hasn't moved. Avoids re-hashing 7 GB of
+ * wiktextract-all.sqlite on every server start.
+ */
+function markerPath(artifactPath: string): string {
+  return `${artifactPath}.verified`;
+}
+
+interface CacheMarker {
+  sha256: string;
+  size: number;
+  mtimeMs: number;
+}
+
+function readMarker(path: string): CacheMarker | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as CacheMarker;
+  } catch {
+    return null;
+  }
+}
+
+function writeMarker(artifactPath: string, sha256: string): void {
+  const m: CacheMarker = {
+    sha256,
+    size: statSync(artifactPath).size,
+    mtimeMs: statSync(artifactPath).mtimeMs,
+  };
+  writeFileSync(markerPath(artifactPath), JSON.stringify(m));
+}
+
 async function downloadArtifact(
   a: ManifestArtifact,
   art: ArtifactStatus
 ): Promise<void> {
   const dest = localPath(a.name);
 
-  // Already cached + verified?
+  // Fast path: marker exists, sha matches manifest, size + mtime match disk.
+  // Skip the SHA-256 of large files entirely.
+  if (existsSync(dest)) {
+    const marker = readMarker(markerPath(dest));
+    const onDiskStat = statSync(dest);
+    if (
+      marker &&
+      marker.sha256 === a.sha256 &&
+      marker.size === a.size &&
+      onDiskStat.size === a.size &&
+      onDiskStat.mtimeMs === marker.mtimeMs
+    ) {
+      art.state = "ready";
+      art.bytesDownloaded = art.compressedSize ?? art.size;
+      console.error(`[mdm-data] cached ${a.name} (verified marker)`);
+      return;
+    }
+  }
+
+  // Slow path: file exists with matching size but no marker (legacy install
+  // from < v0.3.3). Verify SHA once, write marker so we never re-hash.
   if (existsSync(dest) && statSync(dest).size === a.size) {
     art.state = "verifying";
     const hash = await sha256OfFile(dest);
     if (hash === a.sha256) {
+      writeMarker(dest, a.sha256);
       art.state = "ready";
       art.bytesDownloaded = art.compressedSize ?? art.size;
-      console.error(`[mdm-data] cached ${a.name}`);
+      console.error(`[mdm-data] cached ${a.name} (verified + marker written)`);
       return;
     }
     console.error(`[mdm-data] hash mismatch on ${a.name}, re-downloading`);
@@ -173,10 +229,63 @@ async function downloadArtifact(
     unlinkSync(dest);
     throw new Error(`sha256 mismatch on ${a.name}`);
   }
+  writeMarker(dest, a.sha256);
   art.state = "ready";
 }
 
 let installPromise: Promise<void> | null = null;
+
+const LOCK_FILE_NAME = "install.lock";
+
+/**
+ * Try to acquire a process-level lock so multiple server instances don't all
+ * race to verify / download the cache. Returns true if this process has the
+ * lock; false if another active process owns it. Stale locks (process gone)
+ * are taken over.
+ */
+function tryAcquireInstallLock(): boolean {
+  const lockPath = localPath(LOCK_FILE_NAME);
+  ensureDir(DATA_DIR);
+  if (existsSync(lockPath)) {
+    try {
+      const pid = parseInt(readFileSync(lockPath, "utf8").trim(), 10);
+      // process.kill(pid, 0) throws ESRCH if the process is gone, returns true if alive.
+      if (Number.isFinite(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+          // Lock holder is still alive — back off.
+          return false;
+        } catch {
+          // Stale — fall through and overwrite.
+        }
+      }
+    } catch {
+      // Unreadable — overwrite.
+    }
+  }
+  writeFileSync(lockPath, String(process.pid));
+  // Best-effort cleanup on exit.
+  const cleanup = () => {
+    try {
+      if (existsSync(lockPath)) {
+        const cur = readFileSync(lockPath, "utf8").trim();
+        if (cur === String(process.pid)) unlinkSync(lockPath);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  process.on("exit", cleanup);
+  process.on("SIGINT", () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on("SIGTERM", () => {
+    cleanup();
+    process.exit(143);
+  });
+  return true;
+}
 
 /**
  * Begin downloading every artifact in the manifest if not already cached.
@@ -188,6 +297,16 @@ export function ensureDataInstalled(): Promise<void> {
   installPromise = (async () => {
     status.startedAt = new Date().toISOString();
     status.state = "downloading";
+    if (!tryAcquireInstallLock()) {
+      // Another active process owns the cache. Skip our install attempt and
+      // let the lock holder do the work; we'll discover ready files on disk.
+      console.error(
+        "[mdm-data] another instance is managing the cache; skipping install"
+      );
+      status.state = "ready";
+      status.completedAt = new Date().toISOString();
+      return;
+    }
     try {
       ensureDir(DATA_DIR);
       const manifest = await fetchManifest();
