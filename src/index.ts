@@ -9,7 +9,7 @@ import { ensureDataInstalled } from "./data/installer.js";
 
 const server = new McpServer({
   name: "multilingual-dictionary-mcp",
-  version: "0.3.4",
+  version: "0.3.5",
 });
 
 // Status tools first so they're registered alphabetically before any tools

@@ -3,7 +3,13 @@
  * and the Numberbatch binary matrix. Returns undefined when local data isn't
  * available, so callers can fall back to the online APIs.
  */
-import { existsSync, statSync } from "node:fs";
+import {
+  existsSync,
+  statSync,
+  openSync,
+  readSync,
+  closeSync,
+} from "node:fs";
 import { localPath } from "./paths.js";
 
 type SqliteCtor = new (path: string, options?: { readonly?: boolean }) => SqliteDb;
@@ -329,13 +335,38 @@ function loadNumberbatch(): NumberbatchIndex | undefined {
         dim: number;
         rows: number;
       };
-      // Load the entire matrix into memory once. ~2.7 GB at int8 — fits in
-      // RAM on any modern machine and avoids 9M syscalls per cosine query.
-      const matrixBuf = fs.readFileSync(matPath) as Buffer;
-      const matrix = new Int8Array(
-        matrixBuf.buffer,
-        matrixBuf.byteOffset,
-        matrixBuf.byteLength
+      const totalBytes = statSync(matPath).size;
+      const expected = meta.rows * meta.dim;
+      if (totalBytes !== expected) {
+        throw new Error(
+          `numberbatch.bin size mismatch: got ${totalBytes}, expected ${expected}`
+        );
+      }
+
+      // Allocate the full matrix once, then fill it via chunked readSync.
+      // Avoids any readFileSync-imposed buffer size limits and works for
+      // multi-GB files on every platform.
+      const matrix = new Int8Array(totalBytes);
+      const matrixBuf = Buffer.from(matrix.buffer);
+      const fd = openSync(matPath, "r");
+      try {
+        const CHUNK = 64 * 1024 * 1024; // 64 MB
+        let offset = 0;
+        while (offset < totalBytes) {
+          const len = Math.min(CHUNK, totalBytes - offset);
+          const got = readSync(fd, matrixBuf, offset, len, offset);
+          if (got <= 0) {
+            throw new Error(
+              `numberbatch.bin read returned ${got} at offset ${offset}`
+            );
+          }
+          offset += got;
+        }
+      } finally {
+        closeSync(fd);
+      }
+      console.error(
+        `[mdm-data] numberbatch.bin loaded into memory (${(totalBytes / 1_000_000).toFixed(0)} MB)`
       );
 
       const tsv = fs.readFileSync(idxPath, "utf8") as string;
@@ -355,9 +386,10 @@ function loadNumberbatch(): NumberbatchIndex | undefined {
       }
 
       // Pre-compute L2 norms per row so cosine is one dot + two scalar
-      // divides. ~30s once at startup, saves runtime per-query work.
+      // divides. ~5-15s once at startup, saves runtime per-query work.
       const dim = meta.dim;
       const norms = new Float32Array(meta.rows);
+      const tNorms = Date.now();
       for (let r = 0; r < meta.rows; r += 1) {
         const off = r * dim;
         let sum = 0;
@@ -367,6 +399,9 @@ function loadNumberbatch(): NumberbatchIndex | undefined {
         }
         norms[r] = Math.sqrt(sum) || 1;
       }
+      console.error(
+        `[mdm-data] numberbatch norms pre-computed in ${((Date.now() - tNorms) / 1000).toFixed(1)}s`
+      );
 
       nbIndex = {
         dim,
@@ -376,7 +411,11 @@ function loadNumberbatch(): NumberbatchIndex | undefined {
         matrix,
         norms,
       };
-    } catch {
+    } catch (err) {
+      // Surface the real reason instead of silently swallowing — this used
+      // to bury OOM / size-mismatch / Buffer-limit failures behind a
+      // generic "embeddings not yet available" message.
+      console.error("[mdm-data] failed to load numberbatch:", err);
       nbIndex = null;
       return undefined;
     }
