@@ -301,9 +301,44 @@ export function ensureDataInstalled(): Promise<void> {
       // Another active process owns the cache. Skip our install attempt and
       // let the lock holder do the work; we'll discover ready files on disk.
       console.error(
-        "[mdm-data] another instance is managing the cache; skipping install"
+        "[mdm-data] another instance is managing the cache; populating status from manifest"
       );
-      status.state = "ready";
+      try {
+        const manifest = await fetchManifest();
+        status.manifestVersion = manifest.version;
+        status.cdnBase = manifest.cdnBase;
+        status.totalArtifacts = manifest.artifacts.length;
+        status.totalBytesOnWire = manifest.artifacts.reduce(
+          (s, a) => s + (a.compressedSize ?? a.size),
+          0
+        );
+        // Mark each artifact ready if its file exists on disk + size matches.
+        status.artifacts = manifest.artifacts.map((a) => {
+          const ready =
+            existsSync(localPath(a.name)) &&
+            statSync(localPath(a.name)).size === a.size;
+          return {
+            name: a.name,
+            size: a.size,
+            compressedSize: a.compressedSize,
+            state: ready ? "ready" : "queued",
+            bytesDownloaded: ready ? a.compressedSize ?? a.size : 0,
+          };
+        });
+        status.readyArtifacts = status.artifacts.filter(
+          (a) => a.state === "ready"
+        ).length;
+        status.bytesDownloaded = status.artifacts
+          .filter((a) => a.state === "ready")
+          .reduce((s, a) => s + (a.bytesDownloaded ?? 0), 0);
+      } catch (err) {
+        console.error("[mdm-data] manifest fetch failed in lock-skip path:", err);
+      }
+      status.state =
+        status.totalArtifacts > 0 &&
+        status.readyArtifacts === status.totalArtifacts
+          ? "ready"
+          : "downloading";
       status.completedAt = new Date().toISOString();
       return;
     }

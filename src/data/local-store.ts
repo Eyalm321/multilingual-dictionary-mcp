@@ -3,7 +3,7 @@
  * and the Numberbatch binary matrix. Returns undefined when local data isn't
  * available, so callers can fall back to the online APIs.
  */
-import { existsSync, openSync, readSync, closeSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { localPath } from "./paths.js";
 
 type SqliteCtor = new (path: string, options?: { readonly?: boolean }) => SqliteDb;
@@ -307,13 +307,13 @@ interface NumberbatchIndex {
   dim: number;
   rows: number;
   conceptToRow: Map<string, number>;
+  rowConcepts: string[]; // row index -> concept URI (for fast reverse lookup)
+  matrix: Int8Array; // entire 2.7 GB matrix loaded once
+  norms: Float32Array; // pre-computed L2 norms per row, so cosine = dot/(norm_a*norm_b)
 }
 let nbIndex: NumberbatchIndex | null | undefined;
-let nbMatrixFd: number | null = null;
 
-function loadNumberbatch():
-  | { index: NumberbatchIndex; fd: number }
-  | undefined {
+function loadNumberbatch(): NumberbatchIndex | undefined {
   if (nbIndex === null) return undefined;
   if (!nbIndex) {
     const idxPath = localPath("numberbatch.idx.tsv");
@@ -329,44 +329,59 @@ function loadNumberbatch():
         dim: number;
         rows: number;
       };
+      // Load the entire matrix into memory once. ~2.7 GB at int8 — fits in
+      // RAM on any modern machine and avoids 9M syscalls per cosine query.
+      const matrixBuf = fs.readFileSync(matPath) as Buffer;
+      const matrix = new Int8Array(
+        matrixBuf.buffer,
+        matrixBuf.byteOffset,
+        matrixBuf.byteLength
+      );
+
       const tsv = fs.readFileSync(idxPath, "utf8") as string;
       const map = new Map<string, number>();
+      const rowConcepts: string[] = new Array(meta.rows);
       let i = 0;
       while (i < tsv.length) {
         const tab = tsv.indexOf("\t", i);
         if (tab < 0) break;
         const nl = tsv.indexOf("\n", tab + 1);
         if (nl < 0) break;
-        map.set(tsv.slice(i, tab), Number(tsv.slice(tab + 1, nl)));
+        const concept = tsv.slice(i, tab);
+        const row = Number(tsv.slice(tab + 1, nl));
+        map.set(concept, row);
+        rowConcepts[row] = concept;
         i = nl + 1;
       }
-      nbIndex = { dim: meta.dim, rows: meta.rows, conceptToRow: map };
-      nbMatrixFd = openSync(matPath, "r");
+
+      // Pre-compute L2 norms per row so cosine is one dot + two scalar
+      // divides. ~30s once at startup, saves runtime per-query work.
+      const dim = meta.dim;
+      const norms = new Float32Array(meta.rows);
+      for (let r = 0; r < meta.rows; r += 1) {
+        const off = r * dim;
+        let sum = 0;
+        for (let d = 0; d < dim; d += 1) {
+          const v = matrix[off + d];
+          sum += v * v;
+        }
+        norms[r] = Math.sqrt(sum) || 1;
+      }
+
+      nbIndex = {
+        dim,
+        rows: meta.rows,
+        conceptToRow: map,
+        rowConcepts,
+        matrix,
+        norms,
+      };
     } catch {
       nbIndex = null;
       return undefined;
     }
   }
-  return { index: nbIndex, fd: nbMatrixFd! };
-}
-
-function readVector(fd: number, dim: number, row: number): Int8Array {
-  const buf = Buffer.alloc(dim);
-  readSync(fd, buf, 0, dim, row * dim);
-  return new Int8Array(buf.buffer, buf.byteOffset, dim);
-}
-
-function cosineInt8(a: Int8Array, b: Int8Array): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  if (!na || !nb) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+  return nbIndex;
 }
 
 export interface NumberbatchNeighbor {
@@ -374,6 +389,15 @@ export interface NumberbatchNeighbor {
   similarity: number;
 }
 
+/**
+ * In-memory k-nearest-neighbor search over the Numberbatch matrix.
+ *
+ * Performance: for 9.16M rows × 300 dim int8, scanning the whole matrix is
+ * ~2.7 GB of sequential memory access. On modern CPUs with the matrix loaded
+ * (~25 GB/s memory bandwidth), a full scan takes ~100ms. The dot product is
+ * the inner loop — pre-computed L2 norms turn cosine into one dot + one
+ * scalar divide per row.
+ */
 export function localNumberbatchNeighbors(
   word: string,
   language: string,
@@ -383,28 +407,82 @@ export function localNumberbatchNeighbors(
   const nb = loadNumberbatch();
   if (!nb) return undefined;
   const concept = `/c/${language}/${normalizeWord(word)}`;
-  const seedRow = nb.index.conceptToRow.get(concept);
+  const seedRow = nb.conceptToRow.get(concept);
   if (seedRow === undefined) return [];
-  const seed = readVector(nb.fd, nb.index.dim, seedRow);
+
+  const dim = nb.dim;
+  const matrix = nb.matrix;
+  const norms = nb.norms;
+  const rowConcepts = nb.rowConcepts;
+  const seedNorm = norms[seedRow];
+  const seedOff = seedRow * dim;
   const langPrefix = opts.targetLanguage ? `/c/${opts.targetLanguage}/` : null;
-  const heap: NumberbatchNeighbor[] = [];
+
+  // Min-heap of size `limit` keyed by similarity. We use a flat array as the
+  // heap and rebalance in O(log limit) on insert.
+  const sims = new Float32Array(limit);
+  const rows = new Int32Array(limit);
+  let heapSize = 0;
   let heapMin = -Infinity;
-  for (const [c, row] of nb.index.conceptToRow) {
-    if (c === concept) continue;
-    if (langPrefix && !c.startsWith(langPrefix)) continue;
-    const v = readVector(nb.fd, nb.index.dim, row);
-    const sim = cosineInt8(seed, v);
-    if (heap.length < limit) {
-      heap.push({ concept: c, similarity: sim });
-      if (heap.length === limit) {
-        heap.sort((a, b) => a.similarity - b.similarity);
-        heapMin = heap[0].similarity;
+
+  for (let r = 0; r < nb.rows; r += 1) {
+    if (r === seedRow) continue;
+    if (langPrefix) {
+      // Cheap pre-filter via row->concept lookup.
+      const c = rowConcepts[r];
+      if (!c || !c.startsWith(langPrefix)) continue;
+    }
+    const off = r * dim;
+    let dot = 0;
+    for (let d = 0; d < dim; d += 1) {
+      dot += matrix[seedOff + d] * matrix[off + d];
+    }
+    const sim = dot / (seedNorm * norms[r]);
+    if (heapSize < limit) {
+      sims[heapSize] = sim;
+      rows[heapSize] = r;
+      heapSize += 1;
+      if (heapSize === limit) {
+        // Build initial min-heap.
+        for (let i = (limit >> 1) - 1; i >= 0; i -= 1) heapifyDown(sims, rows, i, limit);
+        heapMin = sims[0];
       }
     } else if (sim > heapMin) {
-      heap[0] = { concept: c, similarity: sim };
-      heap.sort((a, b) => a.similarity - b.similarity);
-      heapMin = heap[0].similarity;
+      sims[0] = sim;
+      rows[0] = r;
+      heapifyDown(sims, rows, 0, limit);
+      heapMin = sims[0];
     }
   }
-  return heap.sort((a, b) => b.similarity - a.similarity);
+
+  // Sort the result heap descending by similarity.
+  const result: NumberbatchNeighbor[] = new Array(heapSize);
+  for (let i = 0; i < heapSize; i += 1) {
+    result[i] = { concept: rowConcepts[rows[i]] ?? "", similarity: sims[i] };
+  }
+  result.sort((a, b) => b.similarity - a.similarity);
+  return result;
+}
+
+function heapifyDown(
+  sims: Float32Array,
+  rows: Int32Array,
+  i: number,
+  n: number
+): void {
+  while (true) {
+    const l = 2 * i + 1;
+    const r = 2 * i + 2;
+    let smallest = i;
+    if (l < n && sims[l] < sims[smallest]) smallest = l;
+    if (r < n && sims[r] < sims[smallest]) smallest = r;
+    if (smallest === i) return;
+    const ts = sims[i];
+    sims[i] = sims[smallest];
+    sims[smallest] = ts;
+    const tr = rows[i];
+    rows[i] = rows[smallest];
+    rows[smallest] = tr;
+    i = smallest;
+  }
 }
