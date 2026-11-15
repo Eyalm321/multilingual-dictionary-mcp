@@ -38,7 +38,7 @@ npm install -g multilingual-dictionary-mcp
 }
 ```
 
-On first run, the server downloads its data bundle (~5.4 GB compressed → ~15.6 GB on disk) from `multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com` into `~/.cache/multilingual-dictionary-mcp/` (overridable via `MDM_DATA_DIR`). Each artifact is gzip-decompressed during the stream and SHA-256 verified. Subsequent runs are instant.
+On first run, the server downloads its data bundle (~5.4 GB compressed → ~15.6 GB on disk) from `multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com` into `~/.cache/multilingual-dictionary-mcp/` (overridable via `MDM_DATA_DIR`). Each artifact is gzip-decompressed during the stream and must match the SHA-256 and size pinned in the package (`src/data/pinned.ts`); the data host's own manifest is not trusted, and anything that doesn't match is refused. A complete local cache is used as-is without contacting the host, so an unreachable host never affects an existing install. Subsequent runs are instant.
 
 ## Tools
 
@@ -102,7 +102,7 @@ On first run, the server downloads its data bundle (~5.4 GB compressed → ~15.6
 ```bash
 npm install
 npm run build
-npm test           # 42 tests, all run without local data
+npm test           # all tests run without local data or network
 ```
 
 Source layout:
@@ -126,7 +126,7 @@ Total: **24 tools**.
 
 ## Building the data bundle yourself
 
-The CDN ships official builds, but the entire pipeline is in [`data-pipeline/`](data-pipeline/) — see its [README](data-pipeline/README.md). You can rebuild from upstream sources, ship to your own bucket, and override `MDM_CDN_BASE`.
+The CDN ships official builds, but the entire pipeline is in [`data-pipeline/`](data-pipeline/) — see its [README](data-pipeline/README.md). You can rebuild from upstream sources, ship to your own bucket, and override `MDM_CDN_BASE`. A mirror of the official bundle works as is. A bundle you rebuilt yourself has different hashes, so also update `src/data/pinned.ts` to match your `manifest.json` in your build.
 
 ---
 

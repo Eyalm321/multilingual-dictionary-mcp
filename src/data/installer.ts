@@ -7,17 +7,15 @@ import {
   unlinkSync,
   writeFileSync,
   readFileSync,
+  renameSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { createGunzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
-import {
-  CDN_BASE,
-  DATA_DIR,
-  manifestUrl,
-  localPath,
-} from "./paths.js";
+import { Readable } from "node:stream";
+import { CDN_BASE, DATA_DIR, localPath } from "./paths.js";
+import { DATA_BUNDLE_VERSION, PINNED_ARTIFACTS, type Pins } from "./pinned.js";
 
 interface ManifestArtifact {
   name: string;
@@ -62,16 +60,27 @@ export interface InstallStatus {
   error?: string;
 }
 
-const status: InstallStatus = {
-  state: "pending",
-  dataDir: DATA_DIR,
-  cdnBase: CDN_BASE,
-  totalArtifacts: 0,
-  readyArtifacts: 0,
-  totalBytesOnWire: 0,
-  bytesDownloaded: 0,
-  artifacts: [],
-};
+export interface InstallOptions {
+  cdnBase: string;
+  dataDir: string;
+  /** Expected artifacts; anything else is refused. Defaults to the pinned bundle. */
+  pins: Pins;
+}
+
+export function newStatus(opts: Pick<InstallOptions, "cdnBase" | "dataDir">): InstallStatus {
+  return {
+    state: "pending",
+    dataDir: opts.dataDir,
+    cdnBase: opts.cdnBase,
+    totalArtifacts: 0,
+    readyArtifacts: 0,
+    totalBytesOnWire: 0,
+    bytesDownloaded: 0,
+    artifacts: [],
+  };
+}
+
+const status: InstallStatus = newStatus({ cdnBase: CDN_BASE, dataDir: DATA_DIR });
 
 export function getInstallStatus(): InstallStatus {
   // Return a deep clone so callers can't mutate internal state.
@@ -82,14 +91,57 @@ function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
-async function fetchManifest(): Promise<Manifest> {
-  const res = await fetch(manifestUrl(), {
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch manifest: ${res.status}`);
+const BUILD_HINT =
+  'Cached data is kept. Point MDM_CDN_BASE at a mirror that serves the same bundle, or see "Building the data bundle yourself" in the README.';
+
+function causeOf(err: unknown): string {
+  const e = err as { message?: string; cause?: { code?: string; message?: string } };
+  return e?.cause?.code ?? e?.cause?.message ?? e?.message ?? String(err);
+}
+
+async function fetchManifest(cdnBase: string): Promise<unknown> {
+  const url = `${cdnBase}/manifest.json`;
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Accept: "application/json" } });
+  } catch (err) {
+    throw new Error(`data host unreachable: ${url} (${causeOf(err)}). ${BUILD_HINT}`);
   }
-  return (await res.json()) as Manifest;
+  if (!res.ok) {
+    throw new Error(`data manifest unavailable: ${url} returned HTTP ${res.status}. ${BUILD_HINT}`);
+  }
+  try {
+    return await res.json();
+  } catch {
+    throw new Error(`data manifest at ${url} is not valid JSON. ${BUILD_HINT}`);
+  }
+}
+
+/**
+ * Accept a manifest only if it lists exactly the pinned artifacts with the pinned sha256 and
+ * size. The data host is not trusted: its manifest can't introduce, drop or change an artifact.
+ */
+export function validateManifest(raw: unknown, pins: Pins): Manifest {
+  const m = raw as Partial<Manifest> | null;
+  if (!m || typeof m !== "object" || !Array.isArray(m.artifacts)) {
+    throw new Error("manifest refused: malformed");
+  }
+  const names = m.artifacts.map((a) => a?.name);
+  const pinned = Object.keys(pins);
+  const unknown = names.filter((n) => !Object.prototype.hasOwnProperty.call(pins, n));
+  const missing = pinned.filter((n) => !names.includes(n));
+  if (unknown.length || missing.length || names.length !== pinned.length) {
+    throw new Error(
+      `manifest refused: artifact list does not match the pinned bundle (unexpected: ${unknown.join(", ") || "none"}; missing: ${missing.join(", ") || "none"})`
+    );
+  }
+  for (const a of m.artifacts) {
+    const pin = pins[a.name];
+    if (a.sha256 !== pin.sha256 || a.size !== pin.size) {
+      throw new Error(`manifest refused: ${a.name} does not match its pinned sha256/size`);
+    }
+  }
+  return m as Manifest;
 }
 
 async function sha256OfFile(path: string): Promise<string> {
@@ -123,114 +175,165 @@ function readMarker(path: string): CacheMarker | null {
 }
 
 function writeMarker(artifactPath: string, sha256: string): void {
-  const m: CacheMarker = {
-    sha256,
-    size: statSync(artifactPath).size,
-    mtimeMs: statSync(artifactPath).mtimeMs,
-  };
+  const st = statSync(artifactPath);
+  const m: CacheMarker = { sha256, size: st.size, mtimeMs: st.mtimeMs };
   writeFileSync(markerPath(artifactPath), JSON.stringify(m));
+}
+
+/** Cached file matches its pin according to the verified marker (no hashing). */
+function markerMatchesPin(dest: string, pin: { sha256: string; size: number }): boolean {
+  if (!existsSync(dest)) return false;
+  const marker = readMarker(markerPath(dest));
+  const st = statSync(dest);
+  return (
+    !!marker &&
+    marker.sha256 === pin.sha256 &&
+    marker.size === pin.size &&
+    st.size === pin.size &&
+    st.mtimeMs === marker.mtimeMs
+  );
+}
+
+/**
+ * Is the local copy of this artifact the pinned one? Fast path: verified marker. Slow path
+ * (no or stale marker, size matches): hash once and write the marker. A file that doesn't match
+ * is left in place here; only a verified download replaces it.
+ */
+async function cachedMatchesPin(
+  dest: string,
+  pin: { sha256: string; size: number },
+  art: ArtifactStatus
+): Promise<boolean> {
+  if (markerMatchesPin(dest, pin)) return true;
+  if (existsSync(dest) && statSync(dest).size === pin.size) {
+    art.state = "verifying";
+    if ((await sha256OfFile(dest)) === pin.sha256) {
+      writeMarker(dest, pin.sha256);
+      return true;
+    }
+  }
+  return false;
 }
 
 async function downloadArtifact(
   a: ManifestArtifact,
-  art: ArtifactStatus
+  pin: { sha256: string; size: number },
+  art: ArtifactStatus,
+  opts: InstallOptions,
+  st: InstallStatus
 ): Promise<void> {
-  const dest = localPath(a.name);
-
-  // Fast path: marker exists, sha matches manifest, size + mtime match disk.
-  // Skip the SHA-256 of large files entirely.
-  if (existsSync(dest)) {
-    const marker = readMarker(markerPath(dest));
-    const onDiskStat = statSync(dest);
-    if (
-      marker &&
-      marker.sha256 === a.sha256 &&
-      marker.size === a.size &&
-      onDiskStat.size === a.size &&
-      onDiskStat.mtimeMs === marker.mtimeMs
-    ) {
-      art.state = "ready";
-      art.bytesDownloaded = art.compressedSize ?? art.size;
-      console.error(`[mdm-data] cached ${a.name} (verified marker)`);
-      return;
-    }
-  }
-
-  // Slow path: file exists with matching size but no marker (legacy install
-  // from < v0.3.3). Verify SHA once, write marker so we never re-hash.
-  if (existsSync(dest) && statSync(dest).size === a.size) {
-    art.state = "verifying";
-    const hash = await sha256OfFile(dest);
-    if (hash === a.sha256) {
-      writeMarker(dest, a.sha256);
-      art.state = "ready";
-      art.bytesDownloaded = art.compressedSize ?? art.size;
-      console.error(`[mdm-data] cached ${a.name} (verified + marker written)`);
-      return;
-    }
-    console.error(`[mdm-data] hash mismatch on ${a.name}, re-downloading`);
-    unlinkSync(dest);
-  }
-  ensureDir(dirname(dest));
+  const dest = resolve(opts.dataDir, a.name);
+  // URLs come from our own base, never from the manifest, so a manifest can't send us elsewhere.
+  const useCompressed = !!a.compressedUrl;
+  const url = `${opts.cdnBase}/${a.name}${useCompressed ? ".gz" : ""}`;
+  const wireSize = useCompressed ? a.compressedSize ?? pin.size : pin.size;
+  console.error(
+    `[mdm-data] downloading ${a.name} (${(wireSize / 1_000_000).toFixed(1)} MB on wire${useCompressed ? `, ${(pin.size / 1_000_000).toFixed(1)} MB on disk` : ""})`
+  );
 
   art.state = "downloading";
   art.bytesDownloaded = 0;
-  const useCompressed = !!a.compressedUrl;
-  const url = useCompressed ? a.compressedUrl! : a.url;
-  const wireSize = useCompressed ? a.compressedSize! : a.size;
-  console.error(
-    `[mdm-data] downloading ${a.name} (${(wireSize / 1_000_000).toFixed(1)} MB on wire${useCompressed ? `, ${(a.size / 1_000_000).toFixed(1)} MB on disk` : ""})`
-  );
-
-  const res = await fetch(url);
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new Error(`data host unreachable: ${url} (${causeOf(err)}). ${BUILD_HINT}`);
+  }
   if (!res.ok || !res.body) {
-    throw new Error(`download failed ${res.status} for ${url}`);
+    throw new Error(`download failed ${res.status} for ${url}. ${BUILD_HINT}`);
   }
 
-  // Track per-chunk progress so dictionary_status reflects live download state.
-  const reader = (res.body as unknown as ReadableStream<Uint8Array>).getReader();
-  const out = createWriteStream(dest, { flags: "w" });
-  // Insert gunzip if the wire format is compressed.
-  if (useCompressed) {
-    const gunzip = createGunzip();
-    gunzip.pipe(out);
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      gunzip.write(value);
-      art.bytesDownloaded! += value.byteLength;
-      status.bytesDownloaded += value.byteLength;
+  // Write to a side file; the cached copy (if any) is only replaced once the download verifies.
+  const partial = `${dest}.partial`;
+  const counter = async function* (src: AsyncIterable<Uint8Array>) {
+    for await (const chunk of src) {
+      art.bytesDownloaded! += chunk.byteLength;
+      st.bytesDownloaded += chunk.byteLength;
+      yield chunk;
     }
-    gunzip.end();
-    await new Promise<void>((res, rej) => {
-      out.on("close", () => res());
-      out.on("error", rej);
-    });
-  } else {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      out.write(value);
-      art.bytesDownloaded! += value.byteLength;
-      status.bytesDownloaded += value.byteLength;
+  };
+  const body = Readable.fromWeb(res.body as unknown as import("node:stream/web").ReadableStream<Uint8Array>);
+  try {
+    if (useCompressed) {
+      await pipeline(body, counter, createGunzip(), createWriteStream(partial));
+    } else {
+      await pipeline(body, counter, createWriteStream(partial));
     }
-    out.end();
-    await new Promise<void>((res, rej) => {
-      out.on("close", () => res());
-      out.on("error", rej);
-    });
+    art.state = "verifying";
+    const got = await sha256OfFile(partial);
+    if (got !== pin.sha256 || statSync(partial).size !== pin.size) {
+      art.error = `sha256 mismatch: expected ${pin.sha256.slice(0, 12)}…, got ${got.slice(0, 12)}…`;
+      throw new Error(`refused ${a.name} from ${url}: does not match its pinned sha256/size. ${BUILD_HINT}`);
+    }
+    renameSync(partial, dest);
+  } finally {
+    if (existsSync(partial)) unlinkSync(partial);
   }
-
-  art.state = "verifying";
-  const got = await sha256OfFile(dest);
-  if (got !== a.sha256) {
-    art.state = "failed";
-    art.error = `sha256 mismatch: expected ${a.sha256.slice(0, 12)}…, got ${got.slice(0, 12)}…`;
-    unlinkSync(dest);
-    throw new Error(`sha256 mismatch on ${a.name}`);
-  }
-  writeMarker(dest, a.sha256);
+  writeMarker(dest, pin.sha256);
   art.state = "ready";
+}
+
+/**
+ * Bring the data dir to the pinned bundle. A fully cached bundle needs no network at all;
+ * otherwise the manifest must match the pins and every download must verify against its pin.
+ * Throws (and leaves the cache untouched) when the host is unreachable or serves anything else.
+ */
+export async function installWith(opts: InstallOptions, st: InstallStatus): Promise<void> {
+  st.startedAt = new Date().toISOString();
+  st.state = "downloading";
+  st.cdnBase = opts.cdnBase;
+  st.dataDir = opts.dataDir;
+  const names = Object.keys(opts.pins);
+  st.totalArtifacts = names.length;
+  st.readyArtifacts = 0;
+  st.bytesDownloaded = 0;
+  st.totalBytesOnWire = names.reduce((s, n) => s + opts.pins[n].size, 0);
+  st.artifacts = names.map((n) => ({ name: n, size: opts.pins[n].size, state: "queued" }));
+  try {
+    ensureDir(opts.dataDir);
+    const missing: string[] = [];
+    for (let i = 0; i < names.length; i += 1) {
+      const art = st.artifacts[i];
+      if (await cachedMatchesPin(resolve(opts.dataDir, names[i]), opts.pins[names[i]], art)) {
+        art.state = "ready";
+        art.bytesDownloaded = art.size;
+        st.bytesDownloaded += art.size;
+        st.readyArtifacts += 1;
+        console.error(`[mdm-data] cached ${names[i]} (verified)`);
+      } else {
+        art.state = "queued";
+        missing.push(names[i]);
+      }
+    }
+    if (missing.length > 0) {
+      const manifest = validateManifest(await fetchManifest(opts.cdnBase), opts.pins);
+      st.manifestVersion = manifest.version;
+      console.error(`[mdm-data] ${missing.length} of ${names.length} artifacts to download from ${opts.cdnBase}`);
+      for (const name of missing) {
+        const a = manifest.artifacts.find((x) => x.name === name)!;
+        const art = st.artifacts[names.indexOf(name)];
+        art.compressedSize = a.compressedSize;
+        try {
+          await downloadArtifact(a, opts.pins[name], art, opts, st);
+          st.readyArtifacts += 1;
+        } catch (err) {
+          art.state = "failed";
+          art.error = art.error ?? (err instanceof Error ? err.message : String(err));
+          throw err;
+        }
+      }
+    } else {
+      st.manifestVersion = DATA_BUNDLE_VERSION;
+    }
+    st.state = "ready";
+    st.completedAt = new Date().toISOString();
+    console.error("[mdm-data] all artifacts ready");
+  } catch (err) {
+    st.state = "failed";
+    st.error = err instanceof Error ? err.message : String(err);
+    console.error(`[mdm-data] install failed: ${st.error}`);
+    throw err;
+  }
 }
 
 let installPromise: Promise<void> | null = null;
@@ -288,100 +391,38 @@ function tryAcquireInstallLock(): boolean {
 }
 
 /**
- * Begin downloading every artifact in the manifest if not already cached.
+ * Begin downloading every pinned artifact that isn't already cached.
  * Non-blocking: returns a promise but the caller is free to ignore it.
  * Progress is observable via getInstallStatus().
  */
 export function ensureDataInstalled(): Promise<void> {
   if (installPromise) return installPromise;
+  const opts: InstallOptions = { cdnBase: CDN_BASE, dataDir: DATA_DIR, pins: PINNED_ARTIFACTS };
   installPromise = (async () => {
-    status.startedAt = new Date().toISOString();
-    status.state = "downloading";
     if (!tryAcquireInstallLock()) {
-      // Another active process owns the cache. Skip our install attempt and
-      // let the lock holder do the work; we'll discover ready files on disk.
-      console.error(
-        "[mdm-data] another instance is managing the cache; populating status from manifest"
-      );
-      try {
-        const manifest = await fetchManifest();
-        status.manifestVersion = manifest.version;
-        status.cdnBase = manifest.cdnBase;
-        status.totalArtifacts = manifest.artifacts.length;
-        status.totalBytesOnWire = manifest.artifacts.reduce(
-          (s, a) => s + (a.compressedSize ?? a.size),
-          0
-        );
-        // Mark each artifact ready if its file exists on disk + size matches.
-        status.artifacts = manifest.artifacts.map((a) => {
-          const ready =
-            existsSync(localPath(a.name)) &&
-            statSync(localPath(a.name)).size === a.size;
-          return {
-            name: a.name,
-            size: a.size,
-            compressedSize: a.compressedSize,
-            state: ready ? "ready" : "queued",
-            bytesDownloaded: ready ? a.compressedSize ?? a.size : 0,
-          };
-        });
-        status.readyArtifacts = status.artifacts.filter(
-          (a) => a.state === "ready"
-        ).length;
-        status.bytesDownloaded = status.artifacts
-          .filter((a) => a.state === "ready")
-          .reduce((s, a) => s + (a.bytesDownloaded ?? 0), 0);
-      } catch (err) {
-        console.error("[mdm-data] manifest fetch failed in lock-skip path:", err);
-      }
-      status.state =
-        status.totalArtifacts > 0 &&
-        status.readyArtifacts === status.totalArtifacts
-          ? "ready"
-          : "downloading";
+      // Another active process owns the cache. Report what's on disk (verified markers only,
+      // no network, no hashing) and let the lock holder do the work.
+      console.error("[mdm-data] another instance is managing the cache; reporting cached state");
+      status.startedAt = new Date().toISOString();
+      const names = Object.keys(opts.pins);
+      status.totalArtifacts = names.length;
+      status.totalBytesOnWire = names.reduce((s, n) => s + opts.pins[n].size, 0);
+      status.artifacts = names.map((n) => {
+        const ready = markerMatchesPin(localPath(n), opts.pins[n]);
+        return {
+          name: n,
+          size: opts.pins[n].size,
+          state: ready ? "ready" : "queued",
+          bytesDownloaded: ready ? opts.pins[n].size : 0,
+        };
+      });
+      status.readyArtifacts = status.artifacts.filter((a) => a.state === "ready").length;
+      status.bytesDownloaded = status.artifacts.reduce((s, a) => s + (a.bytesDownloaded ?? 0), 0);
+      status.state = status.readyArtifacts === status.totalArtifacts ? "ready" : "downloading";
       status.completedAt = new Date().toISOString();
       return;
     }
-    try {
-      ensureDir(DATA_DIR);
-      const manifest = await fetchManifest();
-      status.manifestVersion = manifest.version;
-      status.cdnBase = manifest.cdnBase;
-      status.totalArtifacts = manifest.artifacts.length;
-      status.totalBytesOnWire = manifest.artifacts.reduce(
-        (s, a) => s + (a.compressedSize ?? a.size),
-        0
-      );
-      status.artifacts = manifest.artifacts.map((a) => ({
-        name: a.name,
-        size: a.size,
-        compressedSize: a.compressedSize,
-        state: "queued",
-      }));
-      console.error(
-        `[mdm-data] ${manifest.artifacts.length} artifacts, cdn=${manifest.cdnBase}`
-      );
-      for (let i = 0; i < manifest.artifacts.length; i += 1) {
-        const a = manifest.artifacts[i];
-        const art = status.artifacts[i];
-        try {
-          await downloadArtifact(a, art);
-          status.readyArtifacts += 1;
-        } catch (err) {
-          art.state = "failed";
-          art.error = err instanceof Error ? err.message : String(err);
-          throw err;
-        }
-      }
-      status.state = "ready";
-      status.completedAt = new Date().toISOString();
-      console.error("[mdm-data] all artifacts ready");
-    } catch (err) {
-      status.state = "failed";
-      status.error = err instanceof Error ? err.message : String(err);
-      console.error("[mdm-data] install failed:", err);
-      throw err;
-    }
+    await installWith(opts, status);
   })();
   return installPromise;
 }
