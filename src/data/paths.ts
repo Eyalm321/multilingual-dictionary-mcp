@@ -7,7 +7,7 @@ export const DATA_DIR =
 
 export const CDN_BASE =
   process.env.MDM_CDN_BASE ||
-  "https://multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com";
+  "https://s3.casthook.dev/dict-data";
 
 export function manifestUrl(): string {
   return `${CDN_BASE}/manifest.json`;
