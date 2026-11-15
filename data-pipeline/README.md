@@ -31,6 +31,8 @@ npm run build:ngrams        # requires WIKI_TEXT_DIR (see below)
 npm run build:manifest      # walks build/, writes manifest.json with hashes
 ```
 
+The server only accepts artifacts whose sha256 and size match `src/data/pinned.ts`, so a new bundle needs its `manifest.json` values copied there in the same change that publishes it.
+
 ### Wikipedia n-grams (the big one)
 
 `build:ngrams` doesn't download the dump itself because at 22 GB it's better handled with `wikiextractor`. Workflow:

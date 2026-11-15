@@ -56,8 +56,9 @@ async function main() {
   );
 
   // Fire-and-forget the install. Progress is observable via dictionary_status.
-  ensureDataInstalled().catch((err) => {
-    console.error("[mdm-data] install failed (continuing):", err);
+  // The installer already logged the reason; dictionary_status reports it too.
+  ensureDataInstalled().catch(() => {
+    console.error("[mdm-data] continuing without the data bundle; dictionary_status has details");
   });
 }
 
