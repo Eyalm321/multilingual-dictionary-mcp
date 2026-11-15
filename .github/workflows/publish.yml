@@ -3,78 +3,84 @@ name: Publish
 on:
   release:
     types: [published]
+  # Re-publish the current version to npm only (e.g. after an npm-side failure).
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Use Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 20
           cache: npm
-
       - name: Install dependencies
         run: npm ci
-
       - name: Run tests
         run: npm test
-
       - name: Build
         run: npm run build
 
   publish-github:
     needs: test-and-build
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Use Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 20
           registry-url: https://npm.pkg.github.com
           cache: npm
-
       - name: Install dependencies
-        run: npm ci
-
+        run: npm ci --ignore-scripts
       - name: Build
         run: npm run build
-
-      - name: Publish to GitHub Packages
-        run: npm publish
+      - name: Publish to GitHub Packages (scoped)
+        run: |
+          jq '.name = "@eyalm321/multilingual-dictionary-mcp" | .publishConfig.registry = "https://npm.pkg.github.com"' package.json > package-gh.json
+          mv package-gh.json package.json
+          npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # npm trusted publishing (OIDC): no NPM_TOKEN to expire. Needs the trusted publisher set on npmjs.com
+  # (package multilingual-dictionary-mcp -> Settings -> Trusted publisher: GitHub Actions, Eyalm321/multilingual-dictionary-mcp, workflow publish.yml)
+  # and npm 11.5.1+, which Node 24 ships.
   publish-npm:
     needs: test-and-build
+    # A manual run publishes only from main, never from another branch.
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Use Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Use Node.js 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
-
+      - name: Check npm supports trusted publishing (11.5.1+)
+        run: node -e 'const [a,b,c]=process.argv[1].split(".").map(Number);if(a<11||(a===11&&(b<5||(b===5&&c<1)))){console.error("npm "+process.argv[1]+" too old");process.exit(1)}' "$(npm --version)"
+      # No dependency install scripts while this job can mint the npm OIDC token; the build is plain tsc.
       - name: Install dependencies
-        run: npm ci
-
+        run: npm ci --ignore-scripts
       - name: Build
         run: npm run build
-
       - name: Publish to npm (unscoped)
         run: |
           jq '.name = "multilingual-dictionary-mcp" | del(.publishConfig)' package.json > package-npm.json
           mv package-npm.json package.json
           npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
