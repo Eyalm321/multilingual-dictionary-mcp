@@ -1,6 +1,6 @@
 # multilingual-dictionary-mcp data pipeline
 
-Builds the offline data bundle published to `multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com`.
+Builds the offline data bundle served from `https://s3.casthook.dev/dict-data` (the server's default `MDM_CDN_BASE`).
 
 ## What it produces
 

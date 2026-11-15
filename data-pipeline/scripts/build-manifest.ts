@@ -14,7 +14,7 @@ import { BUILD_DIR, sha256OfFile } from "./common";
 const MANIFEST_VERSION = 3;
 const CDN_BASE =
   process.env.MDM_CDN_BASE ||
-  "https://multilingual-dictionary-mcp-data.nyc3.cdn.digitaloceanspaces.com";
+  "https://s3.casthook.dev/dict-data";
 
 interface Artifact {
   name: string;
