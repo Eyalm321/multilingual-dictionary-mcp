@@ -132,7 +132,7 @@ The default data host ships official builds, but the entire pipeline is in [`dat
 
 ## CI / Release
 
-- **CI** runs build + tests on Node 20 & 22 for every push and PR.
+- **CI** runs build + tests on Node 22 & 24 for every push and PR.
 - **Publish** runs on GitHub Release publish, pushes to npm and GitHub Packages.
 
 ---

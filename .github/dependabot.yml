@@ -7,6 +7,10 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 14
+    ignore:
+      # @types/node tracks the lowest supported Node major (engines >=22).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         patterns: ["*"]
