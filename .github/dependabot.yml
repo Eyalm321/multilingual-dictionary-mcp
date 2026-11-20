@@ -15,6 +15,10 @@ updates:
       npm-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+      # One PR a week for all major bumps; split it if one breaks.
+      npm-major:
+        patterns: ["*"]
+        update-types: ["major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -23,6 +27,5 @@ updates:
     cooldown:
       default-days: 14
     groups:
-      actions-minor-patch:
+      actions:
         patterns: ["*"]
-        update-types: ["minor", "patch"]
