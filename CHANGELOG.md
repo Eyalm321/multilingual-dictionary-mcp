@@ -1,9 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-11-22)
 
 ### Changed
 - Requires Node 22 or later (`engines.node >=22`); Node 20 reached end of life in April 2026. CI tests Node 22 and 24; the publish workflow's build and GitHub Packages jobs run on Node 22 (the npm job stays on Node 24 for trusted publishing). `@types/node` follows the lowest supported major (^22).
+- `better-sqlite3` 11.10.0 → 13.0.3. 13 is built on N-API and ships prebuilt binaries for Linux (glibc and musl), macOS and Windows on x64 and arm64, with no install script, so `npx` no longer needs install-script approval or a compiler to load it (#20).
+
+### Maintenance
+- `typescript` → 7.0.2 and `vitest` → 5.1.0 (dev only) (#17, #20).
+- Dependabot opens one weekly PR for npm majors and one for all action bumps (#18, #19). Checkouts in CI no longer persist credentials (#15).
+- The offline data pipeline pins `fast-xml-parser` 5.12.0 and `fast-xml-builder` 1.3.1 (#21). The published package does not include it.
 
 ## 0.3.7 (2026-11-16)
 
